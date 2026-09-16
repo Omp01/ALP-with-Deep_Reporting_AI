@@ -1,0 +1,65 @@
+%% Adaptive LMS — System Architecture
+%% Shows real components from the implementation
+
+graph TB
+    subgraph Frontend["Frontend (Next.js)"]
+        FE_Login["/login"]
+        FE_Learner["/learner/*"]
+        FE_Manager["/manager/*"]
+        FE_Admin["/admin/*"]
+        FE_Embed["/embed/*"]
+    end
+
+    subgraph API["API Service (FastAPI :8000)"]
+        AUTH["Auth & RBAC"]
+        TENANT["Tenant Middleware"]
+        ROUTES["API v1 Routes"]
+    end
+
+    subgraph AdaptiveEngine["Adaptive Engine (:8001)"]
+        MASTERY["Mastery Calculator"]
+        SEQUENCING["Sequencing Policy"]
+        DECISIONS["Decision Store"]
+    end
+
+    subgraph ReportingEngine["Reporting Engine (:8002)"]
+        ANALYTICS["Analytics Calculator"]
+        EVIDENCE["Evidence Builder"]
+        LLM_INSIGHT["LLM Insight Generator"]
+        CITATION["Citation Validator"]
+        RISK["Risk Detector"]
+        DIGEST["Digest Generator"]
+    end
+
+    subgraph IngestionService["Ingestion Service (:8003)"]
+        PARSERS["Document Parsers"]
+        COMP_GEN["Competency Generator"]
+        ASSESS_GEN["Assessment Generator"]
+        EMBEDDER["Embedding Generator"]
+    end
+
+    subgraph Workers["Background Workers"]
+        EVT_WORKER["Event Worker"]
+        RISK_WORKER["Risk Worker"]
+        DIGEST_WORKER["Digest Worker"]
+    end
+
+    subgraph Infrastructure["Infrastructure"]
+        PG["PostgreSQL + pgvector"]
+        REDIS["Redis Streams"]
+        MINIO["MinIO (S3)"]
+    end
+
+    Frontend -->|REST| API
+    API --> AdaptiveEngine
+    API --> ReportingEngine
+    API --> IngestionService
+    Workers --> REDIS
+    Workers --> PG
+    AdaptiveEngine --> PG
+    ReportingEngine --> PG
+    IngestionService --> PG
+    IngestionService --> MINIO
+    API --> PG
+    API --> REDIS
+    ReportingEngine -->|"AI Provider"| LLM_INSIGHT

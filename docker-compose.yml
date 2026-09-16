@@ -1,0 +1,265 @@
+# =============================================================================
+# Adaptive LMS — Docker Compose
+# =============================================================================
+# Starts all services for local development.
+# Usage: docker compose up --build
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Infrastructure
+  # ===========================================================================
+
+  postgres:
+    image: postgres:16
+    container_name: alms-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-adaptive_lms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-adaptive_lms_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-adaptive_lms}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adaptive_lms -d adaptive_lms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - alms-network
+
+  redis:
+    image: redis:7
+    container_name: alms-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alms-network
+
+  minio:
+    build:
+      context: .
+      dockerfile: services/s3-storage/Dockerfile
+    container_name: alms-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin_secret}
+      MINIO_DEFAULT_BUCKETS: adaptive-lms-content
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alms-network
+
+  # ===========================================================================
+  # Backend Services
+  # ===========================================================================
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: alms-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./services/api/app:/app/app
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./scripts:/app/scripts
+    networks:
+      - alms-network
+
+  adaptive-engine:
+    build:
+      context: .
+      dockerfile: services/adaptive-engine/Dockerfile
+    container_name: alms-adaptive-engine
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/adaptive-engine/app:/app/app
+      - ./shared:/app/shared
+    networks:
+      - alms-network
+
+  reporting-engine:
+    build:
+      context: .
+      dockerfile: services/reporting-engine/Dockerfile
+    container_name: alms-reporting-engine
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/reporting-engine/app:/app/app
+      - ./shared:/app/shared
+    networks:
+      - alms-network
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    container_name: alms-ingestion
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./services/ingestion/app:/app/app
+      - ./shared:/app/shared
+    networks:
+      - alms-network
+
+  # ===========================================================================
+  # Background Workers
+  # ===========================================================================
+
+  event-worker:
+    build:
+      context: .
+      dockerfile: workers/event-worker/Dockerfile
+    container_name: alms-event-worker
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./workers/event-worker/app:/app/app
+      - ./shared:/app/shared
+    restart: unless-stopped
+    networks:
+      - alms-network
+
+  risk-worker:
+    build:
+      context: .
+      dockerfile: workers/risk-worker/Dockerfile
+    container_name: alms-risk-worker
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./workers/risk-worker/app:/app/app
+      - ./shared:/app/shared
+    restart: unless-stopped
+    networks:
+      - alms-network
+
+  digest-worker:
+    build:
+      context: .
+      dockerfile: workers/digest-worker/Dockerfile
+    container_name: alms-digest-worker
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./workers/digest-worker/app:/app/app
+      - ./shared:/app/shared
+    restart: unless-stopped
+    networks:
+      - alms-network
+
+  # ===========================================================================
+  # Frontend
+  # ===========================================================================
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: alms-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_APP_NAME=Adaptive LMS
+    depends_on:
+      - api
+    volumes:
+      - ./frontend/app:/app/app
+      - ./frontend/components:/app/components
+      - ./frontend/features:/app/features
+      - ./frontend/hooks:/app/hooks
+      - ./frontend/lib:/app/lib
+      - ./frontend/services:/app/services
+      - ./frontend/types:/app/types
+      - ./frontend/public:/app/public
+    networks:
+      - alms-network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  minio-data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  alms-network:
+    driver: bridge

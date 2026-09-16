@@ -1,0 +1,30 @@
+%% Adaptive LMS — Adaptive Sequencing Flow
+%% Shows decision tree for next content recommendation
+
+graph TD
+    START["POST /api/v1/adaptive/next"] --> LOAD["Load learner competency state"]
+    LOAD --> CHECK_MASTERY{"mastery level?"}
+
+    CHECK_MASTERY -->|"< 0.45"| REMEDIATE["Decision: REMEDIATE"]
+    CHECK_MASTERY -->|"0.45 - 0.80"| CHECK_TREND{"trend?"}
+    CHECK_MASTERY -->|">= 0.80"| CHECK_CONFIDENCE{"confidence >= 0.70?"}
+
+    CHECK_TREND -->|declining| REVISIT["Decision: REVISIT"]
+    CHECK_TREND -->|stable/improving| CHECK_STREAK{"3+ correct in a row?"}
+
+    CHECK_STREAK -->|yes & mastery >= 0.75| SKIP["Decision: SKIP"]
+    CHECK_STREAK -->|no| CONTINUE["Decision: CONTINUE"]
+
+    CHECK_CONFIDENCE -->|yes| ADVANCE["Decision: ADVANCE"]
+    CHECK_CONFIDENCE -->|no| CONTINUE
+
+    REMEDIATE --> CHECK_ERRORS{"3+ same error type?"}
+    CONTINUE --> CHECK_ERRORS
+    REVISIT --> CHECK_ERRORS
+
+    CHECK_ERRORS -->|yes| CHANGE_MOD["Decision: CHANGE_MODALITY"]
+    CHECK_ERRORS -->|no| STORE["Store adaptive_decision"]
+    CHANGE_MOD --> STORE
+
+    STORE --> SELECT["Select content by decision + difficulty"]
+    SELECT --> RESPONSE["Return AdaptiveNextResponse"]

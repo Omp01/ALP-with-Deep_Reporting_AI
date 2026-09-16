@@ -1,0 +1,40 @@
+%% Adaptive LMS — Reporting Pipeline Flow
+%% Shows how grounded AI insights are generated
+
+graph TD
+    REQUEST["Insight Request (scope + question)"] --> ANALYTICS["Analytics Calculator"]
+
+    ANALYTICS --> CALC_MASTERY["Calculate mastery trends"]
+    ANALYTICS --> CALC_ACCURACY["Calculate accuracy trends"]
+    ANALYTICS --> CALC_RESPONSE["Calculate response time trends"]
+    ANALYTICS --> CALC_RETRY["Calculate retry rates"]
+    ANALYTICS --> CALC_ERRORS["Calculate error distributions"]
+    ANALYTICS --> CALC_COHORT["Calculate cohort comparisons"]
+
+    CALC_MASTERY --> EVIDENCE["Evidence Builder"]
+    CALC_ACCURACY --> EVIDENCE
+    CALC_RESPONSE --> EVIDENCE
+    CALC_RETRY --> EVIDENCE
+    CALC_ERRORS --> EVIDENCE
+    CALC_COHORT --> EVIDENCE
+
+    EVIDENCE --> RETRIEVE["Retrieve relevant events from PostgreSQL"]
+    RETRIEVE --> PACKAGE["Build evidence package (bounded)"]
+
+    PACKAGE --> PROMPT["Construct LLM prompt"]
+    PROMPT --> INJECT["Inject analytics + evidence into prompt"]
+    INJECT --> LLM["Send to AI Provider"]
+
+    LLM --> PARSE["Parse structured JSON response"]
+    PARSE --> VALIDATE["Citation Validator"]
+
+    VALIDATE --> CHECK{"All evidence IDs exist?"}
+    CHECK -->|yes| MARK_VALID["Mark insight: VALIDATED"]
+    CHECK -->|no - some missing| REPAIR["Remove unsupported claims"]
+    CHECK -->|no - all missing| MARK_REJECT["Mark insight: REJECTED"]
+
+    REPAIR --> MARK_VALID
+    MARK_VALID --> STORE["Store insight + insight_evidence"]
+    MARK_REJECT --> STORE
+
+    STORE --> RESPONSE["Return InsightResponse to user"]

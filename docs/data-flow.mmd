@@ -1,0 +1,52 @@
+%% Adaptive LMS — Data Flow
+%% Tracks a learning event from creation to competency update to reporting
+
+sequenceDiagram
+    participant L as Learner
+    participant FE as Frontend
+    participant API as API Service
+    participant PG as PostgreSQL
+    participant RS as Redis Stream
+    participant EW as Event Worker
+    participant AE as Adaptive Engine
+    participant RE as Reporting Engine
+    participant AI as AI Provider
+
+    L->>FE: Answer question
+    FE->>API: POST /api/v1/events
+    API->>API: Validate + Tenant check
+    API->>PG: INSERT learning_event (immutable)
+    API->>RS: Publish to "learning_events"
+    API-->>FE: 201 Created
+
+    RS->>EW: Consume event
+    EW->>AE: Update competency
+    AE->>PG: Read current learner_competency
+    AE->>AE: Calculate mastery (weighted formula)
+    AE->>PG: UPDATE learner_competency
+    AE->>PG: INSERT competency_evidence
+
+    Note over L,FE: Later, learner requests next content
+
+    L->>FE: Request next content
+    FE->>API: POST /api/v1/adaptive/next
+    API->>AE: Get recommendation
+    AE->>PG: Read competency state
+    AE->>AE: Apply sequencing policy
+    AE->>PG: INSERT adaptive_decision
+    AE-->>API: AdaptiveNextResponse
+    API-->>FE: Recommendation
+
+    Note over L,FE: Later, user requests AI insight
+
+    FE->>API: POST /api/v1/insights/generate
+    API->>RE: Generate insight
+    RE->>PG: Query learning_events + competencies
+    RE->>RE: Calculate deterministic analytics
+    RE->>RE: Build evidence package
+    RE->>AI: Send analytics + evidence to LLM
+    AI-->>RE: Structured JSON with claims
+    RE->>RE: Validate citations
+    RE->>PG: INSERT insight + insight_evidence
+    RE-->>API: InsightResponse
+    API-->>FE: Grounded insight with evidence IDs
