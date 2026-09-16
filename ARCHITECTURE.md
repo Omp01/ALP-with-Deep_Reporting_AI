@@ -1,153 +1,232 @@
-# Architecture
+# Architecture — Adaptive Learning Platform with Deep Reporting AI
 
-## System Architecture
+## 1. System Overview
 
-The Adaptive LMS is a modular microservice-oriented platform consisting of **5 application services**, **3 infrastructure components**, and **1 frontend application**.
+The Adaptive LMS is a modular, containerized B2B SaaS platform consisting of **5 application services**, **3 background workers**, **3 infrastructure components**, and **1 frontend application** — all orchestrated through Docker Compose with a single `docker compose up` command.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                     FRONTEND (Next.js 14)                        │
-│         App Router · TypeScript · Tailwind · shadcn/ui           │
-│              Learner | Manager | Admin | Embed                   │
+│         App Router · TypeScript · Tailwind CSS                   │
+│    Learner Dashboard | Manager Insights | Admin Hub | Login      │
 └───────────────────────────────┬──────────────────────────────────┘
-                                │ REST /api/v1/*
+                                │ REST /api/v1/*  (HTTP, JWT)
                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                     API SERVICE (FastAPI)                         │
-│      Authentication · RBAC · Multi-tenancy · Request routing     │
-│                   Single entry point for all clients             │
-└─────────┬───────────────────────┬───────────────────┬────────────┘
-          │ Internal HTTP         │ Internal HTTP      │ Internal HTTP
-          ▼                       ▼                   ▼
+│                     API GATEWAY (FastAPI, Port 8000)              │
+│    Authentication · 5-Role RBAC · Multi-Tenant Resolution        │
+│          Event Publishing · Request Proxying · CRUD              │
+└──────────┬─────────────────────┬──────────────────┬─────────────┘
+           │ Internal HTTP       │ Internal HTTP     │ Internal HTTP
+           ▼                     ▼                   ▼
 ┌─────────────────┐  ┌────────────────────┐  ┌────────────────────┐
-│ ADAPTIVE ENGINE │  │  REPORTING ENGINE   │  │ INGESTION SERVICE  │
-│ Competency model│  │ Analytics engine   │  │ PDF/PPT/DOC parser │
-│ Mastery calc    │  │ Evidence builder   │  │ Whisper transcribe │
-│ Sequencing      │  │ Grounded AI/LLM   │  │ Competency extract │
-│ Policy engine   │  │ Citation validator │  │ Assessment gen     │
-│ Decision store  │  │ Risk detection     │  │ Embeddings         │
-└────────┬────────┘  └─────────┬──────────┘  └─────────┬──────────┘
-         │                     │                        │
-         └─────────┬───────────┴────────────┬───────────┘
-                   │                        │
-          ┌────────┴────────┐     ┌─────────┴─────────┐
-          │  BACKGROUND     │     │   INFRASTRUCTURE   │
-          │  WORKERS        │     │                    │
-          │  Event Worker   │     │  PostgreSQL+pgvec  │
-          │  Risk Worker    │     │  Redis Streams     │
-          │  Digest Worker  │     │  MinIO (S3)        │
-          └─────────────────┘     └────────────────────┘
+│ ADAPTIVE ENGINE │  │  REPORTING ENGINE   │  │    API INGESTION   │
+│   Port 8001     │  │    Port 8002        │  │   (via API svc)    │
+│                 │  │                    │  │                    │
+│ Bayesian mastery│  │  Evidence builder  │  │ PDF/DOCX/TXT parse │
+│ Policy engine   │  │  Citation validator│  │ Semantic chunker   │
+│ Skill-gap detect│  │  Analytics calc    │  │ AI competency gen  │
+│ Sequence history│  │  Digest generator  │  │ Assessment synth   │
+└────────┬────────┘  └─────────┬──────────┘  └──────────┬─────────┘
+         │                     │                         │
+         └──────────┬──────────┴──────────────┬──────────┘
+                    │                         │
+         ┌──────────┴──────────┐   ┌──────────┴──────────┐
+         │  BACKGROUND WORKERS │   │   INFRASTRUCTURE     │
+         │  • Event Worker     │   │   • PostgreSQL 16    │
+         │  • Risk Worker      │   │   • Redis 7 Streams  │
+         │  • Digest Worker    │   │   • MinIO (S3)       │
+         └─────────────────────┘   └─────────────────────┘
 ```
 
-## Service Boundaries
+---
 
-### API Service (Port 8000)
-- **Responsibility**: All external-facing operations. Authentication, authorization, tenant resolution, CRUD, event ingestion, request routing.
-- **Does NOT**: Calculate mastery, generate insights, parse documents.
-- **Communicates with**: All internal services via HTTP. PostgreSQL for data persistence. Redis for caching and stream publishing.
+## 2. Service Boundaries and Responsibilities
+
+### API Gateway (Port 8000)
+**Owns:** Authentication, authorization, tenant resolution, CRUD operations, event publishing, request proxying to internal services.
+
+**Does NOT own:** Mastery calculations, AI narrative generation, document parsing.
+
+**Reason:** Centralizing auth/RBAC at the gateway means internal services can trust inbound requests without reimplementing security checks. This is the "trusted ambassador" pattern — complexity lives at the edge, not replicated in every service.
 
 ### Adaptive Engine (Port 8001)
-- **Responsibility**: Competency modelling, mastery calculation, adaptive sequencing decisions.
-- **Key principle**: Decisions are deterministic and explainable. Every decision is stored with its reason and mastery state.
-- **Communicates with**: PostgreSQL (reads events, writes competency state + decisions).
+**Owns:** Bayesian mastery calculations, pedagogical policy decisions, skill-gap detection, cohort bottleneck aggregation.
+
+**Key design principle:** All decisions are **deterministic and explainable**. Every adaptive decision is persisted with the mastery state and policy rationale that produced it. This is intentional — black-box ML models were rejected because L&D stakeholders need to audit why a learner was sent to remediation.
+
+**Mastery Formula:**
+```
+mastery = (0.40 × correctness_rate)
+        + (0.15 × difficulty_weight)
+        + (0.15 × recency_decay)
+        - (0.15 × error_penalty)
+        + (0.15 × consistency_bonus)
+```
 
 ### Reporting Engine (Port 8002)
-- **Responsibility**: Deterministic analytics, evidence building, LLM insight generation, citation validation, risk scoring, digest generation.
-- **Key principle**: Consumes learning events directly — never calls Adaptive Engine internal functions. All AI claims must be traceable to evidence.
-- **Communicates with**: PostgreSQL (reads events + competencies), AI Provider (LLM).
+**Owns:** Evidence package construction, deterministic analytics, AI narrative synthesis, citation grounding validation, digest generation.
 
-### Ingestion Service (Port 8003)
-- **Responsibility**: Content file processing, text extraction, chunking, AI competency extraction, AI assessment generation, embedding generation.
-- **Communicates with**: MinIO (file storage), PostgreSQL (content + competency records), AI Provider (content analysis).
+**Key design principle:** The AI layer is **evidence-first** — the backend computes all analytics deterministically first, builds a verified fact package indexed as `[E-1]`, `[E-2]`, etc., then the LLM reasons over those pre-verified facts. A citation validator rejects any AI claim that doesn't reference a valid evidence key. This eliminates hallucinations structurally rather than via prompt engineering.
 
 ### Background Workers
-- **Event Worker**: Consumes learning events from Redis Streams → triggers competency updates.
-- **Risk Worker**: Periodic scan of learner data → detects risk signals → updates risk scores.
-- **Digest Worker**: Scheduled generation of narrative learning intelligence reports.
+- **Event Worker:** Consumes Redis Stream `learning_events` via `XREADGROUP` consumer group `event_workers`, dispatches events to the Adaptive Engine for mastery updates. Uses `XACK` to prevent duplicate processing.
+- **Risk Worker:** Periodically scans all active enrollments, evaluates 6 anomaly signals, and upserts risk records to `learner_risks` table.
+- **Digest Worker:** Runs on a scheduled loop, generates leadership analytics narrative, and persists to `report_digests` table for distribution.
 
-## Data Flow
+---
 
-### Learning Event Flow
-```
-Learner action → Frontend → POST /api/v1/events → API Service
-                                                      │
-                                                      ├─→ PostgreSQL (immutable insert)
-                                                      └─→ Redis Stream "learning_events"
-                                                              │
-                                                              └─→ Event Worker
-                                                                      │
-                                                                      └─→ Adaptive Engine
-                                                                              │
-                                                                              ├─→ Update learner_competencies
-                                                                              └─→ Create competency_evidence
-```
+## 3. Data Flow Diagrams
 
-### Adaptive Decision Flow
+### Learning Event → Mastery Update
 ```
-Learner requests next content → POST /api/v1/adaptive/next → API Service
-                                                                  │
-                                                                  └─→ Adaptive Engine
-                                                                          │
-                                                                          ├─→ Read learner_competencies
-                                                                          ├─→ Apply sequencing policy
-                                                                          ├─→ Store adaptive_decision
-                                                                          └─→ Return recommendation
+Learner answer → POST /api/v1/events
+                     │
+                     ├─→ INSERT INTO learning_events (immutable audit)
+                     └─→ XADD learning_events Redis Stream
+                                 │
+                                 └─→ Event Worker (XREADGROUP)
+                                         │
+                                         └─→ POST adaptive-engine/events
+                                                 │
+                                                 ├─→ Recalculate mastery score
+                                                 ├─→ UPDATE learner_competencies
+                                                 └─→ INSERT competency_history
 ```
 
-### Reporting Flow
+### Adaptive Next-Step Decision
 ```
-User requests insight → POST /api/v1/insights/generate → API Service
-                                                              │
-                                                              └─→ Reporting Engine
-                                                                      │
-                                                                      ├─→ Analytics Calculator (deterministic)
-                                                                      ├─→ Evidence Builder (select relevant events)
-                                                                      ├─→ LLM (reason over facts, return structured JSON)
-                                                                      ├─→ Citation Validator (verify evidence IDs exist)
-                                                                      └─→ Store validated insight
+Learner requests next content → POST /api/v1/adaptive/next
+                                       │
+                                       └─→ Adaptive Engine
+                                               │
+                                               ├─→ SELECT learner_competencies (mastery, confidence, trend)
+                                               ├─→ Apply pedagogical policy rules
+                                               │     • advance: mastery ≥ 0.80, confidence ≥ 0.75
+                                               │     • remediate: mastery < 0.50, 2+ consecutive fails
+                                               │     • skip: mastery ≥ 0.95 (expert bypass)
+                                               │     • change_modality: high error rate, same content type
+                                               │     • revisit: declining trend detected
+                                               ├─→ INSERT session_sequence_steps (audit trail)
+                                               └─→ Return recommendation with rationale
 ```
 
-## Multi-Tenancy Strategy
+### Evidence-Grounded AI Report
+```
+POST /api/v1/insights/generate { scope_type, scope_id, question }
+       │
+       └─→ Reporting Engine
+               │
+               ├─→ Evidence Builder
+               │     • SELECT recent learning_events (scoped to org + scope_id)
+               │     • SELECT learner_competencies (mastery states, trends)
+               │     • SELECT learner_risks (anomaly signals)
+               │     • Index each fact as [E-1], [E-2], ... [E-N]
+               │
+               ├─→ AI Narrative Synthesis
+               │     • Prompt forces use of [E-#] keys in every claim
+               │     • Deterministic fallback if AI key absent
+               │
+               ├─→ Citation Validator
+               │     • Verify every [E-#] reference maps to real evidence
+               │     • Apply hallucination score penalty for unsupported claims
+               │
+               ├─→ INSERT INTO ai_insights
+               └─→ Return InsightResponse { claims, summary, citations }
+```
 
-- Every tenant-owned table includes `tenant_id` (FK → organizations).
-- A `TenantMiddleware` resolves `tenant_id` from the JWT on every request.
-- Repository base class automatically applies `WHERE tenant_id = :current` to all queries.
-- Cross-tenant access is blocked at the database query level, not the frontend.
-- Tests explicitly verify Organization A cannot access Organization B data.
+---
 
-## AI Architecture
+## 4. Multi-Tenancy Design
 
-- **Provider Abstraction**: `AIProvider` interface with `OpenAICompatibleProvider` implementation.
-- **Embedding**: sentence-transformers `all-MiniLM-L6-v2` (384-dim) runs locally in the Ingestion Service.
-- **LLM**: Used for competency extraction, assessment generation, and insight generation.
-- **Grounding**: Backend computes deterministic analytics first. LLM reasons over pre-computed facts. Every claim must reference evidence IDs. Citation validator rejects unsupported claims.
+**Strategy:** Logical multi-tenancy via `org_id` column on all tenant-owned tables.
 
-## Scaling Strategy
+**Enforcement chain:**
+1. `JWT` embeds `org_id` on login.
+2. `TenantMiddleware` extracts `org_id` from JWT on every request.
+3. `TenantContext` dependency is injected into all routes that touch tenant data.
+4. Every SQLAlchemy query includes `.where(Model.org_id == tenant_ctx.org_id)`.
+5. Internal services receive `org_id` as an explicit query parameter, never inferred.
 
-- **Database**: PostgreSQL with proper indexes, pagination, aggregation queries.
-- **Caching**: Redis for frequently accessed data (competency states, analytics).
-- **Background Processing**: Redis Streams for async event processing.
-- **Service Independence**: Each service can be scaled independently.
-- **Evidence Bounding**: Evidence builder limits events to relevant scope — never loads entire database.
+**Why not database-per-tenant?** At the current scale, schema-per-tenant or database-per-tenant would multiply operational overhead without proportional benefit. The `org_id`-column approach enables easy migration to physical separation if a specific tenant's load justifies it.
 
-## Major Design Decisions
+**Automated verification:** `test_auth_rbac.py::test_cross_tenant_isolation` explicitly verifies that Organization A's JWT cannot retrieve Organization B's data.
 
-See [docs/decisions/](./docs/decisions/) for Architecture Decision Records.
+---
 
-| Decision | Rationale |
-|----------|-----------|
-| PostgreSQL + pgvector | Single database simplifies deployment; pgvector enables semantic search |
-| Redis Streams (not Kafka) | Simpler operations for the current scale; migrable to Kafka if needed |
-| Shared database | Reduces operational complexity vs. database-per-service |
-| API as gateway | Single auth/tenant resolution point; internal services trust the gateway |
-| Deterministic mastery formula | Transparent, explainable, configurable; avoids ML black box |
-| Evidence-first AI | LLM never fabricates data; backend is source of truth |
+## 5. Key Design Decisions & Trade-offs
 
-## Trade-offs
+### Decision 1: API Gateway as Single Entry Point
+**Rationale:** A single external-facing service centralizes auth, RBAC, and tenant resolution. Internal services operate in a trusted network — no redundant JWT verification in every microservice.
 
-| Trade-off | Accepted | Mitigated By |
-|-----------|----------|-------------|
-| Shared database limits service independence | Yes | Clean table ownership boundaries |
-| API gateway is a single point of failure | Yes | Docker health checks + restart policies |
-| In-process embeddings slow ingestion startup | Yes | Model cached after first load |
-| Redis Streams lack Kafka durability | Yes | Events are persisted to PostgreSQL first |
+**Trade-off accepted:** The API Gateway becomes a single point of failure.
+
+**Mitigation:** Docker health checks, `restart: unless-stopped` policy, and response-time monitoring via structured logging.
+
+---
+
+### Decision 2: PostgreSQL (Not MongoDB / DynamoDB)
+**Rationale:** The data model has strong relational structure (courses → modules → content → competencies → enrollments → events). PostgreSQL enforces foreign key integrity, supports complex JOIN queries for analytics, and pgvector enables semantic search on content embeddings without a separate vector store.
+
+**Trade-off accepted:** A shared database between microservices couples their schemas.
+
+**Mitigation:** Clean table ownership — each service has designated tables it writes to. Cross-service data access is read-only and mediated through the API gateway, never direct cross-service SQL.
+
+---
+
+### Decision 3: Redis Streams (Not Apache Kafka)
+**Rationale:** Kafka requires ZooKeeper/KRaft brokers, specific partition management, and significant DevOps overhead. Redis Streams offer the same consumer group semantics (`XREADGROUP`, `XACK`, `XPENDING`) with a fraction of the operational complexity. For the current event volume, Redis Streams are sufficient and are migratable to Kafka by swapping the publisher/consumer implementations.
+
+**Trade-off accepted:** Redis Streams have weaker durability guarantees than Kafka's WAL-based log.
+
+**Mitigation:** Learning events are written to PostgreSQL _before_ Redis publication. If Redis is lost, events are not lost — only real-time processing is delayed until the stream is restored.
+
+---
+
+### Decision 4: Deterministic Mastery Formula (Not ML Model)
+**Rationale:** A multi-factor weighted Bayesian formula produces explainable, auditable mastery scores that L&D directors can understand and tune. A neural mastery model would be a black box — L&D professionals need to understand _why_ a learner was marked as at-risk or advanced.
+
+**Trade-off accepted:** The formula is less adaptive than a trained ML model and cannot learn latent learner traits automatically.
+
+**Mitigation:** The formula parameters are configurable constants. The architecture is designed so the mastery calculator can be swapped for a trained model if observational data accumulates.
+
+---
+
+### Decision 5: Evidence-First AI Reporting (Not Direct LLM Prompting)
+**Rationale:** Direct LLM prompting over raw data hallucinate — statistics are invented, names are confused, trends are fabricated. By computing all analytics deterministically first and passing only verified, indexed facts to the LLM, hallucinations are structurally eliminated. The citation validator enforces this as a hard constraint.
+
+**Trade-off accepted:** More engineering complexity than simple prompt engineering. Deterministic analytics must be maintained as schema changes occur.
+
+**Mitigation:** The Evidence Builder is fully testable independently. The Citation Validator provides a hallucination score that can gate report publication.
+
+---
+
+### Decision 6: Shared Library (`shared/`)
+**Rationale:** Event schemas, data contracts, and parsing utilities are used across multiple services. A shared library prevents drift and ensures all services speak the same data language (e.g., `LearningEventType` enum, `InsightResponse` contract).
+
+**Trade-off accepted:** Changes to `shared/` require coordinated deployments across all dependent services.
+
+**Mitigation:** Contracts use versioned Pydantic models. Breaking changes require updating the contract version, making breaking changes visible.
+
+---
+
+## 6. Scaling Strategy
+
+| Component | Horizontal Scale Strategy |
+|-----------|--------------------------|
+| **API Gateway** | Stateless — multiple instances behind a load balancer |
+| **Adaptive Engine** | Stateless per-request — scale as needed, decisions are persisted to DB |
+| **Reporting Engine** | CPU-bound (analytics) — scale vertically or horizontally with DB connection pooling |
+| **Workers** | Redis Streams support multiple consumer group members; add worker containers freely |
+| **PostgreSQL** | Read replicas for analytics queries; pgBouncer for connection pooling |
+| **MinIO** | Cluster mode with distributed erasure coding for production |
+
+---
+
+## 7. Architecture Decision Records
+
+Full ADRs available in [`docs/decisions/`](./docs/decisions/):
+
+- [ADR-001: PostgreSQL + pgvector](./docs/decisions/001-postgresql.md)
+- [ADR-002: Redis Streams](./docs/decisions/002-redis-streams.md)
+- [ADR-003: pgvector for Semantic Search](./docs/decisions/003-pgvector.md)
