@@ -5,11 +5,11 @@ Automated tests for AI Competency Derivation and Assessment Item Generation.
 import pytest
 import httpx
 
-BASE_URL = "http://localhost:8000/api/v1"
+BASE_URL = "http://127.0.0.1:8000/api/v1"
 
 
 async def get_auth_token(email: str, password: str = "Password123!") -> str:
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
         resp = await client.post("/auth/login", json={"email": email, "password": password})
         assert resp.status_code == 200
         return resp.json()["access_token"]
@@ -26,7 +26,7 @@ async def test_derive_competencies_from_text():
         "and Kafka consumer groups to guarantee fault tolerance."
     )
 
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
         resp = await client.post(
             "/ai/derive-competencies",
             headers={"Authorization": f"Bearer {instructor_token}"},
@@ -46,10 +46,10 @@ async def test_derive_competencies_from_text():
 async def test_generate_assessments_and_review_workflow():
     instructor_token = await get_auth_token("sarah.instructor@acme.com")
 
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
         # 1. Fetch existing course, module, and competency
         courses_resp = await client.get("/courses", headers={"Authorization": f"Bearer {instructor_token}"})
-        course = [c for c in courses_resp.json() if c.get("modules")][0]
+        course = [c for c in courses_resp.json() if c.get("modules") and len(c["modules"]) > 0][0]
         module_id = course["modules"][0]["id"]
 
         comp_resp = await client.get("/competencies", headers={"Authorization": f"Bearer {instructor_token}"})
