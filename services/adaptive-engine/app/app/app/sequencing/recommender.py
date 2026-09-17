@@ -10,7 +10,7 @@ from sqlalchemy import select, and_, asc
 from app.models.tables import Module, ContentItem
 
 
-async def find_recommended_content(
+async def select_recommended_content(
     db: AsyncSession,
     org_id: UUID,
     course_id: UUID,
@@ -71,6 +71,3 @@ async def find_recommended_content(
         "content_title": matched_content.title,
         "difficulty": "standard",
     }
-
-
-select_recommended_content = find_recommended_content
