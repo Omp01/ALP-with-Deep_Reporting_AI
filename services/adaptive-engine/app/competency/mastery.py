@@ -30,12 +30,41 @@ def calculate_recency_factor(last_updated: Optional[datetime], current_time: Opt
     return float(math.exp(-decay_rate * hours))
 
 
+def calculate_bkt_mastery(
+    prior_p_l: float,
+    observations: List[bool],
+    p_transit: float = 0.15,
+    p_guess: float = 0.20,
+    p_slip: float = 0.10,
+) -> float:
+    """
+    Computes Bayesian Knowledge Tracing (Corbett & Anderson BKT) probability of mastery.
+    """
+    p_l = prior_p_l
+    for obs in observations:
+        if obs:
+            # P(L|obs=correct) = P(L)*(1-S) / (P(L)*(1-S) + (1-P(L))*G)
+            numerator = p_l * (1.0 - p_slip)
+            denominator = numerator + (1.0 - p_l) * p_guess
+        else:
+            # P(L|obs=incorrect) = P(L)*S / (P(L)*S + (1-P(L))*(1-G))
+            numerator = p_l * p_slip
+            denominator = numerator + (1.0 - p_l) * (1.0 - p_guess)
+
+        p_l_given_obs = numerator / max(1e-6, denominator)
+        # Transition: P(L_t) = P(L|obs) + (1 - P(L|obs)) * P(T)
+        p_l = p_l_given_obs + (1.0 - p_l_given_obs) * p_transit
+
+    return float(max(0.0, min(1.0, p_l)))
+
+
 def calculate_mastery(
     recent_attempts: List[Dict[str, Any]],
     current_time: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
-    Computes mastery score from recent learner attempts using the weighted formula:
+    Computes mastery score from recent learner attempts using Bayesian Knowledge Tracing
+    combined with the multi-factor weighted formula:
     mastery = (
         w_correct * correctness_score
       + w_diff    * difficulty_bonus
@@ -47,6 +76,7 @@ def calculate_mastery(
     if not recent_attempts:
         return {
             "mastery": 0.0,
+            "bkt_mastery": 0.0,
             "recent_accuracy": 0.0,
             "avg_response_time_ms": 0.0,
             "retry_rate": 0.0,
@@ -105,6 +135,14 @@ def calculate_mastery(
     )
     normalized_mastery = max(0.0, min(1.0, raw_mastery / w_sum))
 
+    # 6. Bayesian Knowledge Tracing
+    bkt_score = calculate_bkt_mastery(
+        prior_p_l=0.1,
+        observations=[bool(a.get("correct")) for a in recent_attempts],
+    )
+    # Blend 60% Multi-Factor + 40% BKT
+    blended_mastery = 0.60 * normalized_mastery + 0.40 * bkt_score
+
     # Latency & retry metrics
     response_times = [a["duration_ms"] for a in recent_attempts if a.get("duration_ms")]
     avg_latency = float(np.mean(response_times)) if response_times else 0.0
@@ -113,7 +151,8 @@ def calculate_mastery(
     retry_rate = retried_count / total_count
 
     return {
-        "mastery": round(float(normalized_mastery), 4),
+        "mastery": round(float(blended_mastery), 4),
+        "bkt_mastery": round(float(bkt_score), 4),
         "recent_accuracy": round(float(correctness_score), 4),
         "avg_response_time_ms": round(avg_latency, 1),
         "retry_rate": round(float(retry_rate), 4),
