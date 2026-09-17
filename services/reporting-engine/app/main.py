@@ -97,6 +97,8 @@ async def readiness():
     }
 
 
+from app.ai.llm_provider import generate_grounded_narrative
+
 # =============================================================================
 # Grounded AI Insights Endpoints
 # =============================================================================
@@ -110,7 +112,8 @@ async def generate_grounded_insight(
 ):
     """
     Constructs a factual evidence package from PostgreSQL, synthesizes an AI narrative
-    grounded with explicit [E-#] citations, verifies citation integrity, and saves to database.
+    grounded with explicit [E-#] citations via LLM / Deterministic engine,
+    verifies citation integrity, and saves to database.
     """
     start_time = time.monotonic()
 
@@ -123,13 +126,29 @@ async def generate_grounded_insight(
     )
     evidence_items = evidence_data.get("evidence_package", [])
 
-    # 2. Synthesize Grounded Narrative
-    # Every assertion must embed citations referencing evidence keys
-    claims_list = []
-    narrative_paragraphs = []
+    # 2. Synthesize Grounded Narrative using Multi-Provider LLM with Fallback
+    narrative = await generate_grounded_narrative(
+        scope_type=req.scope_type,
+        evidence_items=evidence_items,
+        question=req.question,
+    )
 
-    if not evidence_items:
-        narrative = "No baseline learning telemetry or competency data is currently recorded for this scope."
+    # 3. Validate Grounding & Citations
+    is_valid, grounding_score, matched_citations = validate_grounded_citations(
+        narrative_text=narrative,
+        evidence_package=evidence_items,
+    )
+
+    claims_list = [
+        InsightClaim(
+            claim=mc.get("snippet", mc["citation_key"]),
+            confidence=mc.get("confidence", 0.90),
+            evidence_ids=[mc["citation_key"]],
+            supported=True,
+        )
+        for mc in matched_citations
+    ]
+    if not claims_list and not evidence_items:
         claims_list.append(
             InsightClaim(
                 claim="Learning activity is currently in initialized state.",
@@ -138,28 +157,6 @@ async def generate_grounded_insight(
                 supported=True,
             )
         )
-    else:
-        # Construct grounded statements citing specific evidence facts
-        for idx, ev in enumerate(evidence_items[:5]):
-            key = ev["citation_key"]
-            fact_claim = f"Evaluation confirms: {ev['fact']} [{key}]."
-            narrative_paragraphs.append(fact_claim)
-            claims_list.append(
-                InsightClaim(
-                    claim=ev["fact"],
-                    confidence=ev.get("confidence", 0.90),
-                    evidence_ids=[key],
-                    supported=True,
-                )
-            )
-
-        narrative = " ".join(narrative_paragraphs)
-
-    # 3. Validate Grounding & Citations
-    is_valid, grounding_score, matched_citations = validate_grounded_citations(
-        narrative_text=narrative,
-        evidence_package=evidence_items,
-    )
 
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     insight_id = uuid.uuid4()
