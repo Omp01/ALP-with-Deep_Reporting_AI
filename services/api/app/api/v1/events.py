@@ -23,6 +23,7 @@ router = APIRouter(prefix="/events", tags=["Learning Events Tracking"])
 
 
 class EventPayload(BaseModel):
+    event_id: Optional[UUID] = None
     event_type: str = Field(..., description="Canonical event type")
     course_id: Optional[UUID] = None
     module_id: Optional[UUID] = None
@@ -44,10 +45,24 @@ async def ingest_event(
 ):
     """
     Ingests an atomic learning telemetry event.
-    Persists to relational database and broadcasts to Redis Stream.
+    Persists to relational database with idempotency and broadcasts to Redis Stream.
     """
-    event_id = uuid.uuid4()
+    event_id = payload.event_id or uuid.uuid4()
     event_time = payload.timestamp or datetime.utcnow()
+
+    # Check for duplicate event_id if supplied
+    if payload.event_id:
+        existing_check = await db.execute(
+            select(LearningEvent).where(LearningEvent.id == payload.event_id)
+        )
+        if existing_check.scalar_one_or_none():
+            return {
+                "status": "duplicate_ignored",
+                "event_id": str(payload.event_id),
+                "redis_message_id": "duplicate_skipped",
+                "event_type": payload.event_type,
+                "timestamp": event_time.isoformat(),
+            }
 
     # 1. Persist to PostgreSQL
     event_record = LearningEvent(
