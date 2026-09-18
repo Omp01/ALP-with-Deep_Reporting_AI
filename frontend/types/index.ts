@@ -7,9 +7,35 @@
 // Enums
 // =============================================================================
 
-export type UserRole = "learner" | "manager" | "admin";
+/**
+ * The five roles the backend actually defines (services/api/app/models/user.py).
+ * This previously read `"learner" | "manager" | "admin"`, which matched no
+ * stored value: an org administrator is `org_admin`, and `instructor` and
+ * `system_admin` were missing entirely.
+ *
+ * `Role` in lib/auth.ts is the canonical definition; this alias exists so the
+ * older type surfaces in this file stay consistent with it.
+ */
+export type UserRole =
+  | "system_admin"
+  | "org_admin"
+  | "instructor"
+  | "manager"
+  | "learner";
+
 export type Difficulty = "beginner" | "intermediate" | "advanced";
-export type ContentType = "text" | "video" | "audio" | "document" | "interactive";
+
+/**
+ * Stored uppercase on `content_items.content_type`. The lowercase variants
+ * this type previously declared never matched a database value.
+ */
+export type ContentType =
+  | "VIDEO"
+  | "ARTICLE"
+  | "QUIZ"
+  | "ASSIGNMENT"
+  | "DOCUMENT"
+  | "TEXT";
 export type ContentStatus = "processing" | "ready" | "error";
 export type CourseStatus = "draft" | "published" | "archived";
 export type CompetencyTrend = "improving" | "stable" | "declining";
@@ -27,33 +53,47 @@ export interface LoginRequest {
   password: string;
 }
 
+/** Mirrors TokenResponse in services/api/app/schemas/auth.py. */
 export interface LoginResponse {
   access_token: string;
   token_type: string;
+  expires_in: number;
+  user: User;
 }
 
+/**
+ * Mirrors UserProfileResponse. Note `org_id` and `full_name` — the earlier
+ * `tenant_id` / `first_name` / `last_name` fields do not exist on the API.
+ */
 export interface User {
   id: string;
-  tenant_id: string;
+  org_id: string;
   email: string;
-  first_name: string;
-  last_name: string;
+  full_name: string;
   role: UserRole;
+  avatar_url?: string | null;
   is_active: boolean;
-  last_login?: string;
   created_at: string;
+  organization?: Organization | null;
+  teams?: string[];
 }
 
 // =============================================================================
 // Organization
 // =============================================================================
 
+/**
+ * Mirrors TenantInfo in services/api/app/schemas/auth.py. `settings` and
+ * `created_at` are returned only by the organisations endpoints, not by the
+ * nested object on a user profile, so both are optional.
+ */
 export interface Organization {
   id: string;
   name: string;
   slug: string;
+  is_active: boolean;
   settings?: Record<string, unknown>;
-  created_at: string;
+  created_at?: string;
 }
 
 // =============================================================================

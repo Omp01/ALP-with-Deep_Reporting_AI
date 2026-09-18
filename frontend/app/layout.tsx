@@ -1,5 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+
+import { ToastProvider } from "@/components/ui/toast";
 import "./globals.css";
 
 const inter = Inter({
@@ -9,7 +11,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Adaptive LMS — Intelligent Learning Platform",
+  title: {
+    default: "Adaptive LMS — Intelligent Learning Platform",
+    template: "%s · Adaptive LMS",
+  },
   description:
     "Adaptive Learning Management System with live competency modelling, real-time adaptive sequencing, and grounded AI reporting.",
   keywords: [
@@ -21,6 +26,12 @@ export const metadata: Metadata = {
   ],
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#4f46e5",
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -28,8 +39,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-white text-slate-900 font-sans">
-        {children}
+      <body className="min-h-full bg-background font-sans text-fg">
+        {/* Toasts are mounted at the root so any page can raise one without
+            rendering its own container. */}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );
