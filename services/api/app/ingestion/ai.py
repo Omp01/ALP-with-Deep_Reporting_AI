@@ -71,9 +71,9 @@ def _model_for(task: str) -> str:
     if specific:
         return specific
     # AI_MODEL defaults to an OpenAI model name, which a local Ollama server does not have.
-    if (settings.ai_provider or "").strip().lower() == "ollama":
-        return settings.ollama_model
-    return settings.ai_model
+    # Likewise for Gemini and Groq: AI_MODEL only applies to an OpenAI-compatible endpoint.
+    kind = (settings.ai_provider or "").strip().lower()
+    return {"ollama": settings.ollama_model, "gemini": settings.gemini_model, "groq": settings.groq_model}.get(kind, settings.ai_model)
 
 
 def ai_status() -> AIStatus:

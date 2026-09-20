@@ -254,6 +254,12 @@ class OllamaProvider(OpenAICompatibleProvider):
         return f"ollama ({self.model})"
 
 
+def _thinks(model: str) -> bool:
+    """Gemini models from 2.5 onwards spend part of the output budget on thinking."""
+    name = (model or "").lower()
+    return any(tag in name for tag in ("gemini-2.5", "gemini-3", "flash-latest", "pro-latest"))
+
+
 class GeminiProvider(AIProvider):
     """
     Provider implementation for Google Gemini REST API.
@@ -307,7 +313,9 @@ class GeminiProvider(AIProvider):
             "contents": contents,
             "generationConfig": {
                 "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens,
+                # Gemini 2.5 and later "think" first, and thinking tokens count against this limit:
+                # without headroom a JSON answer is cut off mid-way.
+                "maxOutputTokens": request.max_tokens + (4096 if _thinks(self.model) else 0),
             },
         }
         if system_instruction:
@@ -334,8 +342,7 @@ class GeminiProvider(AIProvider):
                 content = ""
                 if candidates and "content" in candidates[0]:
                     parts = candidates[0]["content"].get("parts", [])
-                    if parts and "text" in parts[0]:
-                        content = parts[0]["text"]
+                    content = "".join(p.get("text", "") for p in parts if not p.get("thought"))
 
                 usage_meta = data.get("usageMetadata", {})
                 usage = {
