@@ -1,75 +1,49 @@
 """
-Adaptive Learning & Live Competency Gateway Router.
-Enforces multi-tenant isolation, role authorization, and proxies to the Adaptive Engine service.
+Adaptive Learning & Live Competency Router.
+
+`/next` and `/decisions` are served by the adaptive engine in this service (app/adaptive: a deterministic decision from stored
+evidence, stored with the facts it used, so "Why am I seeing this?" is answered from the record). The competency state, skill gap
+and cohort gap paths are served by the competency engine (app/competency).
 """
 
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_tenant, require_roles, TenantContext
+from app.adaptive import service as adaptive_service
+from app.api.deps import get_current_user, get_current_tenant, get_db, require_roles, TenantContext
+from app.api.v1 import mastery as mastery_api
+from app.competency import service as competency_service
+from app.events import queries as event_queries
 from app.models import User
-from app.core.config import settings
-from shared.contracts.contracts import AdaptiveNextRequest, AdaptiveNextResponse
 
 router = APIRouter(prefix="/adaptive", tags=["Adaptive Engine & Competencies"])
 
 
 class NextStepPayload(BaseModel):
-    learner_id: Optional[UUID] = None
-    session_id: UUID
-    course_id: UUID
-    current_module_id: Optional[UUID] = None
-    current_competency_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
+    competency_id: Optional[UUID] = None       # default: the competency of the learner's latest evidence
+    session_id: Optional[UUID] = None          # the learning session this happens in, when known
 
 
-@router.post("/next", response_model=AdaptiveNextResponse)
+@router.post("/next")
 async def get_next_adaptive_step(
     payload: NextStepPayload,
     current_user: User = Depends(get_current_user),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
-):
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
     """
-    Computes real-time pedagogical recommendation and adapts difficulty/modality.
-    Learners request for themselves; managers/admins can request for subordinate learners.
+    What the caller should do next, and why. The decision is computed from stored evidence (never from the request), stored,
+    and recorded as an `adaptive_decision_made` event. There is no learner_id: you can only ask for yourself.
     """
-    target_learner_id = payload.learner_id or current_user.id
-
-    # RBAC check: learners can only request their own next step
-    if current_user.role == "learner" and target_learner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Learners can only request adaptive sequencing for themselves",
-        )
-
-    req_body = {
-        "learner_id": str(target_learner_id),
-        "session_id": str(payload.session_id),
-        "course_id": str(payload.course_id),
-        "current_module_id": str(payload.current_module_id) if payload.current_module_id else None,
-        "current_competency_id": str(payload.current_competency_id) if payload.current_competency_id else None,
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{settings.adaptive_engine_url}/api/v1/adaptive/next",
-                params={"org_id": str(tenant_ctx.org_id)},
-                json=req_body,
-            )
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"Adaptive Engine returned error: {resp.text}",
-                )
-            return resp.json()
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Adaptive Engine unreachable: {str(exc)}",
-        )
+        return await adaptive_service.next_step(db, org_id=tenant_ctx.org_id, user=current_user, course_id=payload.course_id, competency_id=payload.competency_id,
+                                                session_id=payload.session_id)
+    except adaptive_service.AdaptiveError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
 
 
 @router.get("/decisions/{learner_id}")
@@ -78,53 +52,26 @@ async def get_adaptive_decisions(
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Retrieves explainable audit log of adaptive sequencing decisions."""
-    if current_user.role == "learner" and learner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Learners can only inspect their own adaptive decisions",
-        )
+    """The stored decisions for a learner, newest first, with the facts each one used."""
+    await mastery_api._visible_learner(db, current_user, tenant_ctx.org_id, learner_id)
+    return await adaptive_service.history(db, tenant_ctx.org_id, learner_id, limit)
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.adaptive_engine_url}/api/v1/adaptive/decisions/{learner_id}",
-                params={"org_id": str(tenant_ctx.org_id), "limit": limit},
-            )
-            return resp.json()
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Adaptive Engine unreachable: {str(exc)}",
-        )
 
+# Competency state, skill gaps and cohort gaps are computed by the competency engine from stored evidence (app/competency),
+# not by the adaptive-engine service. These paths are kept for existing clients; new clients use /mastery.
 
 @router.get("/competencies/{learner_id}")
 async def get_learner_competency_states(
     learner_id: UUID,
     current_user: User = Depends(get_current_user),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Fetches live mastery, confidence, trend, and error distributions for a learner."""
-    if current_user.role == "learner" and learner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Learners can only inspect their own competency states",
-        )
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.adaptive_engine_url}/api/v1/adaptive/competencies/{learner_id}",
-                params={"org_id": str(tenant_ctx.org_id)},
-            )
-            return resp.json()
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Adaptive Engine unreachable: {str(exc)}",
-        )
+    """Mastery, confidence, trend (from the update history) and evidence counts for a learner. Only evidence-based state is returned."""
+    await mastery_api._visible_learner(db, current_user, tenant_ctx.org_id, learner_id)
+    return await competency_service.list_states(db, tenant_ctx.org_id, learner_id)
 
 
 @router.get("/skill-gaps/{learner_id}")
@@ -132,44 +79,20 @@ async def get_learner_skill_gaps(
     learner_id: UUID,
     current_user: User = Depends(get_current_user),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Retrieves detected individual skill gaps and recommended interventions."""
-    if current_user.role == "learner" and learner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Learners can only view their own skill gaps",
-        )
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.adaptive_engine_url}/api/v1/adaptive/skill-gaps/{learner_id}",
-                params={"org_id": str(tenant_ctx.org_id)},
-            )
-            return resp.json()
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Adaptive Engine unreachable: {str(exc)}",
-        )
+    """Skill gaps of a learner: competencies below their target with enough evidence, each with the reasons and figures behind it."""
+    found = await mastery_api.learner_gaps(learner_id, None, current_user, tenant_ctx, db)
+    return {"learner_id": str(learner_id), "gaps_count": len(found["gaps"]), "skill_gaps": found["gaps"], "not_enough_evidence": found["not_enough_evidence"]}
 
 
 @router.get("/cohort-gaps/{team_id}")
 async def get_cohort_skill_gaps(
     team_id: UUID,
-    current_user: User = Depends(require_roles(["instructor", "manager", "org_admin", "super_admin"])),
+    current_user: User = Depends(require_roles(["ld_admin", "manager", "org_admin"])),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Aggregates systemic skill gaps across cohort/team members."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.adaptive_engine_url}/api/v1/adaptive/cohort-gaps/{team_id}",
-                params={"org_id": str(tenant_ctx.org_id)},
-            )
-            return resp.json()
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Adaptive Engine unreachable: {str(exc)}",
-        )
+    """For a team: per competency, how many assessed learners are below the target."""
+    result = await mastery_api.cohort_gaps(team_id, None, current_user, tenant_ctx, db)
+    return {"team_id": str(team_id), **result, "systemic_skill_gaps": [c for c in result["competencies"] if c["learners_below_target"] > 0]}
