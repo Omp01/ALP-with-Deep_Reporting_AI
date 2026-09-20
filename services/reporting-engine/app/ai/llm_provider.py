@@ -8,6 +8,7 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 import httpx
+from app.core.config import settings
 
 logger = logging.getLogger("reporting-engine.ai")
 
@@ -66,10 +67,10 @@ async def generate_grounded_narrative(
     user_prompt = _build_evidence_context_prompt(question, scope_type, evidence_items)
 
     # 1. Try Google Gemini API
-    gemini_key = os.getenv("GEMINI_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY") or getattr(settings, "gemini_api_key", "")
     if gemini_key:
         try:
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            gemini_model = os.getenv("GEMINI_MODEL") or getattr(settings, "gemini_model", "gemini-1.5-flash")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={gemini_key}"
             payload = {
                 "contents": [
@@ -94,10 +95,10 @@ async def generate_grounded_narrative(
             logger.warning(f"Gemini generation failed, falling back: {e}")
 
     # 2. Try Groq Cloud API
-    groq_key = os.getenv("GROQ_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY") or getattr(settings, "groq_api_key", "")
     if groq_key:
         try:
-            groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            groq_model = os.getenv("GROQ_MODEL") or getattr(settings, "groq_model", "llama-3.3-70b-versatile")
             url = "https://api.groq.com/openai/v1/chat/completions"
             headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
             payload = {

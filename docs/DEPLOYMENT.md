@@ -43,7 +43,7 @@ docker exec -it alms-api python -m scripts.seed_demo_data
 
 | Persona | Role | Email | Password | Primary Showcase |
 | :--- | :--- | :--- | :--- | :--- |
-| **Arthur Admin** | `org_admin` | `admin@acme.com` | `Password123!` | Ingestion Studio, BI Export Hub, Embeddable Widget |
+| **Arthur Admin** | `org_admin` | `admin@acme.com` | `Password123!` | Content Library (add, review, publish), BI Export Hub, Embeddable Widget |
 | **Marcus Manager** | `manager` | `marcus.manager@acme.com` | `Password123!` | Cohort Skill Gaps, Early Warning Risk Alerts, Scheduled Digest |
 | **Alice Learner** | `learner` | `alice.learner@acme.com` | `Password123!` | High Mastery ($>85\%$), Adaptive Advancement, Grounded AI "Why?" Citations |
 | **Bob Learner** | `learner` | `bob.learner@acme.com` | `Password123!` | Fast Progress but Low Assessment Mastery ($42\%$), Remediation Policy |

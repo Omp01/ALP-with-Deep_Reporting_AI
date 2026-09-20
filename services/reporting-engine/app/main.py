@@ -5,8 +5,14 @@ import logging
 import sys
 import time
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+# Automatically locate and add project root to sys.path for 'shared' imports when running locally
+root_dir = Path(__file__).resolve().parents[3]
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 
@@ -75,6 +81,18 @@ async def request_logging(request: Request, call_next):
     )
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+@app.get("/", tags=["Root"])
+async def root():
+    return {
+        "service": "Reporting Engine Service",
+        "status": "online",
+        "docs_url": "/docs",
+        "health_url": "/health",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
 
 
 @app.get("/health", tags=["Health"])

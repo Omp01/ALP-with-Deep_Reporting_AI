@@ -201,14 +201,254 @@ class OpenAICompatibleProvider(AIProvider):
             self._client = None
 
 
+class GroqProvider(OpenAICompatibleProvider):
+    """
+    Provider implementation for Groq Cloud API.
+    Fast inference using Llama 3 / Mixtral models.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "llama-3.3-70b-versatile",
+        base_url: str = "https://api.groq.com/openai/v1",
+        timeout: int = 30,
+        max_retries: int = 3,
+    ):
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return f"groq ({self.model})"
+
+
+class OllamaProvider(OpenAICompatibleProvider):
+    """
+    A local model served by Ollama (https://ollama.com), through its OpenAI-compatible API.
+    Free, private, and needs no API key: the zero-cost development provider.
+    """
+
+    def __init__(
+        self,
+        model: str = "llama3.1",
+        base_url: str = "http://127.0.0.1:11434",
+        timeout: int = 120,
+        max_retries: int = 2,
+    ):
+        super().__init__(
+            api_key="ollama",  # ignored by Ollama; the client still sends a bearer header
+            model=model,
+            base_url=base_url.rstrip("/") + "/v1",
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return f"ollama ({self.model})"
+
+
+class GeminiProvider(AIProvider):
+    """
+    Provider implementation for Google Gemini REST API.
+    Supports gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash, etc.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-1.5-flash",
+        timeout: int = 30,
+        max_retries: int = 3,
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._client = None
+
+    @property
+    def provider_name(self) -> str:
+        return f"gemini ({self.model})"
+
+    async def _get_client(self):
+        if self._client is None:
+            import httpx
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    async def complete(self, request: AICompletionRequest) -> AICompletionResponse:
+        import time
+        import httpx
+
+        client = await self._get_client()
+        contents = []
+        system_instruction = None
+
+        for m in request.messages:
+            if m.role == "system":
+                system_instruction = {"parts": [{"text": m.content}]}
+            elif m.role == "assistant":
+                contents.append({"role": "model", "parts": [{"text": m.content}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": m.content}]})
+
+        if not contents:
+            contents.append({"role": "user", "parts": [{"text": "Generate summary"}]})
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": request.temperature,
+                "maxOutputTokens": request.max_tokens,
+            },
+        }
+        if system_instruction:
+            payload["systemInstruction"] = system_instruction
+        if request.response_format and request.response_format.get("type") == "json_object":
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+
+        last_error: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                start = time.monotonic()
+                response = await client.post(url, json=payload)
+                latency_ms = int((time.monotonic() - start) * 1000)
+
+                if response.status_code == 429:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+
+                response.raise_for_status()
+                data = response.json()
+
+                candidates = data.get("candidates", [])
+                content = ""
+                if candidates and "content" in candidates[0]:
+                    parts = candidates[0]["content"].get("parts", [])
+                    if parts and "text" in parts[0]:
+                        content = parts[0]["text"]
+
+                usage_meta = data.get("usageMetadata", {})
+                usage = {
+                    "prompt_tokens": usage_meta.get("promptTokenCount", 0),
+                    "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
+                    "total_tokens": usage_meta.get("totalTokenCount", 0),
+                }
+
+                return AICompletionResponse(
+                    content=content,
+                    model=self.model,
+                    usage=usage,
+                    finish_reason=candidates[0].get("finishReason", "stop") if candidates else "stop",
+                    latency_ms=latency_ms,
+                )
+            except httpx.TimeoutException as e:
+                last_error = e
+                continue
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code >= 500:
+                    continue
+                raise AIProviderError(
+                    message=f"Gemini provider error: {e.response.status_code} {e.response.text}",
+                    provider=self.provider_name,
+                    retryable=False,
+                )
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise AIProviderError(
+            message=f"Gemini provider failed after {self.max_retries} attempts: {last_error}",
+            provider=self.provider_name,
+            retryable=True,
+        )
+
+    async def health_check(self) -> bool:
+        return bool(self.api_key)
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+    ) -> str:
+        messages = []
+        if system_prompt:
+            messages.append(AIMessage(role="system", content=system_prompt))
+        messages.append(AIMessage(role="user", content=prompt))
+
+        req = AICompletionRequest(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        resp = await self.complete(req)
+        return resp.content
+
+    async def close(self):
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+
 def get_ai_provider(
+    provider_name: Optional[str] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
-) -> OpenAICompatibleProvider:
-    """Factory function returning configured AIProvider implementation."""
+) -> AIProvider:
+    """Factory function returning configured AIProvider implementation (Gemini, Groq, or OpenAI)."""
     import os
-    key = api_key or os.getenv("AI_API_KEY", "")
+    from pathlib import Path
+    try:
+        from dotenv import load_dotenv
+        root_env = Path(__file__).resolve().parents[2] / ".env"
+        if root_env.exists():
+            load_dotenv(root_env)
+        else:
+            load_dotenv()
+    except Exception:
+        pass
+
+    selected = (provider_name or os.getenv("AI_PROVIDER", "")).strip().lower()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("AI_API_KEY", "").strip()
+
+    # 0. Local Ollama
+    if selected == "ollama":
+        return OllamaProvider(
+            model=model or os.getenv("OLLAMA_MODEL") or os.getenv("AI_MODEL") or "llama3.1",
+            base_url=base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        )
+
+    # 1. Google Gemini
+    if selected == "gemini" or (not selected and gemini_key):
+        return GeminiProvider(
+            api_key=api_key or gemini_key,
+            model=model or os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+        )
+
+    # 2. Groq Cloud
+    if selected == "groq" or (not selected and groq_key):
+        return GroqProvider(
+            api_key=api_key or groq_key,
+            model=model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        )
+
+    # 3. Default OpenAI-compatible
+    key = api_key or openai_key
     mod = model or os.getenv("AI_MODEL", "gpt-4o-mini")
     url = base_url or os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
     return OpenAICompatibleProvider(api_key=key, model=mod, base_url=url)
