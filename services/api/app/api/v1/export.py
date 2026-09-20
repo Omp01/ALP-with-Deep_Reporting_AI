@@ -76,7 +76,7 @@ async def export_competency_mastery(
     """Exports live competency mastery states for analytics."""
     q = (
         select(LearnerCompetency)
-        .where(LearnerCompetency.org_id == tenant_ctx.org_id)
+        .where(LearnerCompetency.org_id == tenant_ctx.org_id, LearnerCompetency.basis == "evidence", LearnerCompetency.data_points_count > 0)
         .order_by(desc(LearnerCompetency.updated_at))
         .limit(limit)
     )

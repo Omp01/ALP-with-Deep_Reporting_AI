@@ -15,10 +15,10 @@ Traditional LMSs track **completion — not comprehension**. A learner can click
 
 **This platform solves the comprehension gap by:**
 
-1. **Live Bayesian Competency Modelling** — Multi-factor mastery scoring with correctness weighting, IRT difficulty calibration, recency decay, error penalty, and consistency bonuses.
-2. **Real-Time Adaptive Sequencing** — Deterministic pedagogical policy engine that selects between `advance`, `remediate`, `skip`, `change_modality`, and `revisit` based on live competency state.
-3. **Multi-Signal Early Warning** — Autonomous anomaly detection across six risk dimensions: declining mastery, consecutive failures, retry frequency, latency spikes, low assessment scores, and inactivity stagnation.
-4. **Evidence-Grounded AI Reporting** — AI narratives backed by a verifiable telemetry fact package. Every claim is mapped to an `[E-#]` citation that links to a concrete database record.
+1. **Explainable Competency Modelling** — Mastery comes from graded answers only, through one deterministic soft-evidence Bayesian Knowledge Tracing update. Written answers are graded by an AI agent that produces a *signal* (never a mastery figure), checked against the answer and reviewed by a person when it is not trustworthy. Every figure has an audit chain you can open ("Why is this 68%?") and recompute. See [docs/COMPETENCY_ENGINE.md](./docs/COMPETENCY_ENGINE.md) and [docs/GRADING_AGENT.md](./docs/GRADING_AGENT.md).
+2. **Evidence-Based Adaptation with "Why this?"** — The next step (continue, remediate, easier, harder, change format, revisit, skip ahead, assess) is decided by documented rules over stored evidence and the skill graph, saved with its facts, and explained to the learner from those facts. See [docs/ADAPTIVE_ENGINE.md](./docs/ADAPTIVE_ENGINE.md).
+3. **Explained Early Warning** — Documented rules over stored evidence and activity (persistent low mastery, declining trend, repeated failed attempts, retries, long time on task, inactivity, prerequisite gaps). Every reason cites the real figures; too little evidence is reported as such, not as risk.
+4. **Evidence-Grounded AI Reporting** — Four distinct reports (learner, manager, L&D, organization) built from an evidence package. Every claim cites stored records that open in an evidence drawer; a claim with an invented id, a number the evidence does not contain, or a causal statement is refused and listed. Digests, an embeddable widget and BI endpoints use the same backend. See [docs/REPORTING_AI.md](./docs/REPORTING_AI.md).
 
 ---
 
@@ -67,8 +67,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design decisions and trade
 |---------|-------------|
 | **Multi-Tenancy** | `org_id` scoped at database query level — zero cross-tenant data leaks |
 | **5-Role RBAC** | `learner`, `instructor`, `manager`, `org_admin`, `super_admin` with route guards |
-| **Content Ingestion** | Upload PDF/DOCX/TXT → semantic chunking → S3 storage → knowledge extraction |
-| **Learning Event Telemetry** | 12 canonical event types, immutable audit log, Redis Stream fan-out |
+| **Content Ingestion** | Upload PDF/DOCX/PPTX/TXT/MD/audio/video or add a YouTube link → validation → extraction → chunking → AI analysis (objectives, competencies, source-quoted questions) → **admin review** → publish. Local-first AI (Ollama), no fake fallbacks. See [docs/CONTENT_INGESTION.md](./docs/CONTENT_INGESTION.md) |
+| **Learning Events & Sessions** | Append-only event store (enforced by the database), real learning sessions, 20 event types, per-answer evidence, server-recorded facts a browser cannot forge, idempotent ingestion, outbox delivery to Redis. See [docs/EVENT_MODEL.md](./docs/EVENT_MODEL.md) |
 | **Bayesian Mastery Model** | Multi-factor weighted formula with correctness, difficulty, recency, errors, consistency |
 | **Adaptive Sequencing** | Deterministic pedagogical policies: remediate, advance, skip, change_modality, revisit |
 | **6-Signal Risk Engine** | Autonomous anomaly scanning with severity tiers: `low`, `medium`, `high`, `critical` |
@@ -120,20 +120,84 @@ docker compose up --build
 
 ---
 
+## Running Manually (Without Docker)
+
+You can run the frontend and API manually on your local machine, but the system still requires **PostgreSQL** and **Redis** to be running. You can launch just the infrastructure via Docker, then run the services natively.
+
+### 1. Start Infrastructure
+```bash
+docker compose up -d postgres redis minio
+```
+
+### 2. Start Frontend (Next.js)
+```bash
+cd frontend
+npm install
+npm run dev
+# Frontend is at http://localhost:3000
+```
+
+### 3. Start API Gateway (FastAPI)
+```bash
+cd services/api
+
+# Set PYTHONPATH so Python can locate both 'app' and the root 'shared' modules
+# On PowerShell:
+$env:PYTHONPATH=".;..\..\shared;."
+# On CMD:
+set PYTHONPATH=.;..\..\shared;.
+# On Bash/Linux/Mac:
+export PYTHONPATH=.:../../shared:.
+
+python -m uvicorn app.main:app --reload --port 8000
+# API Swagger is at http://localhost:8000/docs
+```
+
+---
+
 ## Demo Credentials
 
 All demo users share the password: **`Password123!`**
 
 | Persona | Role | Email | What to Explore |
 |---------|------|-------|----------------|
-| **Arthur Admin** | `org_admin` | `admin@acme.com` | Ingestion Studio, BI Export Hub, Embeddable Widget |
+| **Arthur Admin** | `org_admin` | `admin@acme.com` | Content Library (add, review, publish), BI Export Hub, Embeddable Widget |
 | **Marcus Manager** | `manager` | `marcus.manager@acme.com` | Cohort Skill Gaps, Early Warning Alerts, Scheduled Digest |
-| **Alice Learner** | `learner` | `alice.learner@acme.com` | High mastery (88%), adaptive advancement, AI "Why?" citations |
-| **Bob Learner** | `learner` | `bob.learner@acme.com` | Shallow mastery (38%), skill gap detection, remediation |
-| **Carol Learner** | `learner` | `carol.learner@acme.com` | Declining trajectory, latency spikes, medium risk alert |
-| **Dan Learner** | `learner` | `dan.learner@acme.com` | 14-day inactivity stagnation, critical dropout risk |
+| **Alice Learner** | `learner` | `alice.learner@acme.com` | High mastery from correct answers, improving trend, the "Why?" evidence chain |
+| **Bob Learner** | `learner` | `bob.learner@acme.com` | Course content completed but weak mastery (completion is not comprehension), skill gaps, explained risk |
+| **Carol Learner** | `learner` | `carol.learner@acme.com` | Strong start then a run of wrong answers: declining trend |
+| **Dan Learner** | `learner` | `dan.learner@acme.com` | Few answers, two weeks of inactivity |
+
+The learners' history is **synthetic**: `python scripts/generate_demo_data.py` writes answers (labelled `seed_history`) and the competency engine derives mastery, trend, gaps and risk from them. No mastery number is typed in.
 
 > **Quick Demo Login:** Click any persona card on the `/login` page to sign in instantly without typing credentials.
+
+---
+
+## Foundation, Learning Experience & Migrations (Phases 1-2)
+
+```powershell
+# Infrastructure
+docker compose up -d postgres redis minio
+
+# Apply migrations (from the repository root)
+$env:DATABASE_URL_SYNC = "postgresql://adaptive_lms:adaptive_lms_dev_password@127.0.0.1:5433/adaptive_lms"
+python -m alembic -c database/alembic.ini upgrade head
+
+# Seed demo data (idempotent; also assigns roles and the skill graph)
+python scripts/seed.py
+
+# Synthetic learner history, run through the real competency engine (Phase 5)
+python scripts/generate_demo_data.py
+
+# Run the foundation tests (builds its own throwaway database; needs only postgres)
+cd services\api
+python -m pytest tests\foundation
+```
+
+Restart the API after migrating so it loads the new models (`alembic upgrade head` now applies revisions 003 and 004). See [docs/LEARNING_EXPERIENCE.md](./docs/LEARNING_EXPERIENCE.md), [docs/TESTING.md](./docs/TESTING.md) (including the real-browser journey in `scripts/e2e/`), [docs/RBAC.md](./docs/RBAC.md), [docs/SKILL_GRAPH.md](./docs/SKILL_GRAPH.md) and [docs/CONTENT_MODEL.md](./docs/CONTENT_MODEL.md).
+
+> **Note:** the test-count badge and "80/80" figures elsewhere in this README predate Phase 1 and are inaccurate; see `docs/TESTING.md`.
 
 ---
 
@@ -169,7 +233,7 @@ adaptive-lms/
 │       ├── login/              # Persona quick switcher
 │       ├── learner/            # Learner dashboard, learning session, AI insights
 │       ├── manager/            # Team performance, cohort reports, digests
-│       └── admin/              # Executive hub, ingestion studio, BI export
+│       └── admin/              # Executive hub, content library / add-content / review, BI export
 │
 ├── services/
 │   ├── api/                    # API Gateway (FastAPI, port 8000)
@@ -232,10 +296,12 @@ Key API modules:
 
 | Limitation | Notes |
 |------------|-------|
-| **LLM provider requires API key** | Set `AI_API_KEY` in `.env`. The system uses a deterministic fallback if the key is absent — all grounded AI reports still run with pre-computed evidence (no OpenAI calls required for the demo). |
-| **Whisper transcription is stubbed** | Audio/video file ingestion extracts placeholder text. Full Whisper integration requires `FFmpeg` and a GPU-enabled container. |
-| **Embeddings use sentence-transformers** | Running `all-MiniLM-L6-v2` locally in the ingestion container. Cold start may take 15–30s on first container launch. |
+| **An AI provider must be configured for content analysis** | `AI_PROVIDER=ollama` (free, local) or an external provider; see [docs/AI_PROVIDER.md](./docs/AI_PROVIDER.md). With none configured, ingestion says so and content can still be authored by hand; nothing is invented. (Reporting AI, Phase 7, is separate.) |
+| **Transcription is optional** | Uploaded audio/video is transcribed only if `faster-whisper` is installed; otherwise the admin pastes a transcript. YouTube uses the video's own captions. Nothing is ever faked. See [docs/ZERO_COST_MODE.md](./docs/ZERO_COST_MODE.md) |
+| **Embeddings are optional** | Set `AI_EMBEDDING_MODEL` (e.g. Ollama `nomic-embed-text`) to enable the stage. Vectors are stored with their model name; nothing retrieves by them until the reporting AI (Phase 7). |
 | **No real email delivery** | The digest worker generates and stores digests but does not send emails (SMTP not configured). Recipients are logged to PostgreSQL only. |
+| **Competency parameters are defaults, not fitted** | The mastery update uses documented, standard starting values (`MASTERY_*` in `.env.example`); they have not been tuned on real learner data. Grading quality on a real model has not been measured. See [docs/COMPETENCY_ENGINE.md](./docs/COMPETENCY_ENGINE.md) section 9 and [docs/GRADING_AGENT.md](./docs/GRADING_AGENT.md) section 7. |
+| **Adaptive sequencing still uses the earlier rules** | `/adaptive/next` still hard-codes some inputs and returns the first content item of a module; it is rebuilt in Phase 6. Mastery, gaps and risk are already on the new engine. |
 | **In-memory adaptive decisions** | The adaptive engine currently holds open sessions in memory. Restarting the container resets in-flight session state (no crash recovery). |
 | **Single-region deployment** | The architecture supports multi-region via read replicas but requires manual DNS and connection string configuration. |
 
