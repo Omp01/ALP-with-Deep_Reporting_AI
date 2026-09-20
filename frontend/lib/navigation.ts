@@ -136,6 +136,13 @@ const LEARNER_NAV: NavSection[] = [
         description: "What you have shown you can do, and why",
       },
       {
+        label: "Daily Check-in",
+        href: "/learner/checkin",
+        icon: ClipboardCheck,
+        status: "ready",
+        description: "An AI-written quiz on your course material, and your scores",
+      },
+      {
         label: "AI Insights",
         href: "/learner/insights",
         icon: Sparkles,

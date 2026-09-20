@@ -79,3 +79,14 @@
 | **Archetype 2** | Bob Bennett | High completion (100%), shallow mastery (0.38), high skill gap | Verified (100% progress, 0.38 mastery, `SkillGap` severity=high) |
 | **Archetype 3** | Carol Clark | High initial scores falling steeply to 0.42, 33% decline | Verified (High risk flag, score=0.74, action recommendations) |
 | **Archetype 4** | Dan Davis | Disengaged, stalled at 15%, 12 days inactivity | Verified (Critical risk flag, score=0.92, 0.28 mastery) |
+
+---
+
+## Added requirement: login check-in (Phase 11)
+
+| Requirement (from the product owner) | Status | Implementation | Verification |
+|---|---|---|---|
+| On every login a learner gets an AI-generated quiz on the content in their course | `[IMPLEMENTED]` | `app/checkin/quiz.py`, `service.py`, `api/v1/checkins.py`; login page opens `/learner/checkin`; questions verified against the material; different each time (unused passages first, earlier questions avoided) | `test_checkin_api.py`, `checkin_journey.mjs` (18/18, real Gemini) |
+| A psychometric test | `[IMPLEMENTED]` (as a reflection aid, not a validated instrument) | `app/checkin/psychometric.py`: four constructs, model-written statements, reverse-keying, code scoring | `test_checkin_rules.py`, `test_checkin_api.py`; limits stated in `docs/CHECKIN.md` |
+| Scores and a report based on it | `[IMPLEMENTED]` | `app/checkin/report.py`: score by lesson, review with source passages, self-report scores and change, observations, checked AI coaching note | `test_checkin_api.py`, `checkin_journey.mjs` |
+| Use AI LLMs to generate it, keys from `.env` | `[IMPLEMENTED]` | `AIProvider` abstraction, task `checkin`, `AI_MODEL_CHECKIN`; Gemini key from `.env` | Live run against `gemini-3.1-flash-lite` |

@@ -106,6 +106,23 @@ def faithful_report(package: dict) -> dict:
     return {"summary": first.get("statement", "Nothing to report."), "claims": claims, "limits": ["Only the supplied evidence was considered."]}
 
 
+def faithful_items(prompt: str = "") -> dict:
+    """Three statements for each self-report construct, the second one negatively worded."""
+    out = []
+    for construct in ("self_efficacy", "motivation", "self_regulation", "learning_anxiety"):
+        out += [
+            {"dimension": construct, "text": f"I feel good about how I am doing with {construct.replace('_', ' ')} in this subject.", "reverse": False},
+            {"dimension": construct, "text": f"I often struggle with {construct.replace('_', ' ')} when the subject gets difficult.", "reverse": True},
+            {"dimension": construct, "text": f"Most days I can handle {construct.replace('_', ' ')} for this course without trouble.", "reverse": False},
+        ]
+    return {"items": out}
+
+
+def faithful_note(facts: dict) -> dict:
+    quiz = facts.get("quiz", {})
+    return {"note": f"You answered {quiz.get('correct')} of {quiz.get('total')} questions correctly in this check-in. Review the lessons listed in your report to firm up the ones you missed, and keep your study sessions short and regular."}
+
+
 class ScriptedAI(AIProvider):
     """
     analysis / questions / grading: a dict, or a callable(material | fields) -> dict, or a raw string to return verbatim.
@@ -113,13 +130,31 @@ class ScriptedAI(AIProvider):
     error: an exception to raise from every call (simulates an outage).
     """
 
-    def __init__(self, analysis=None, questions=None, error: Optional[Exception] = None, grading=None, reporting=None):
+    def __init__(self, analysis=None, questions=None, error: Optional[Exception] = None, grading=None, reporting=None, items=None, note=None):
         self._analysis, self._questions, self._error, self._grading, self._reporting = analysis, questions, error, grading, reporting
+        self._items, self._note = items, note
         self.calls: List[Dict[str, str]] = []
 
     async def complete(self, request: AICompletionRequest) -> AICompletionResponse:
         system, user = request.messages[0].content, request.messages[-1].content
         first_user = next(m.content for m in request.messages if m.role == "user")
+        if "psychometric item writer" in system:
+            self.calls.append({"kind": "items", "system": system, "user": first_user, "material": ""})
+            if self._error is not None:
+                raise self._error
+            source = self._items if self._items is not None else faithful_items
+            payload = source(first_user) if callable(source) else source
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            return AICompletionResponse(content=text, model="scripted-model", usage={}, finish_reason="stop", latency_ms=1)
+        if "learning coach" in system:
+            facts = json.loads(first_user.splitlines()[1])          # the prompt is: header line, the facts as one JSON line, footer line
+            self.calls.append({"kind": "note", "system": system, "user": first_user, "material": "", "facts": facts})
+            if self._error is not None:
+                raise self._error
+            source = self._note if self._note is not None else faithful_note
+            payload = source(facts) if callable(source) else source
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            return AICompletionResponse(content=text, model="scripted-model", usage={}, finish_reason="stop", latency_ms=1)
         if "reporting analyst" in system:
             package = reporting_package(first_user)
             self.calls.append({"kind": "reporting", "system": system, "user": first_user, "material": "", "package": package})

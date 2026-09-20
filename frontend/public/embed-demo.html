@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embed demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #0f172a; }
+    textarea { width: 100%; height: 7rem; font-family: ui-monospace, monospace; font-size: 12px; }
+    button { margin: .5rem 0 1.5rem; padding: .5rem 1rem; border: 0; border-radius: 6px; background: #4f46e5; color: #fff; font-weight: 600; cursor: pointer; }
+    #host { border: 1px dashed #94a3b8; border-radius: 8px; padding: 1rem; min-height: 4rem; }
+    small { color: #475569; }
+  </style>
+</head>
+<body>
+  <h1>Any other page</h1>
+  <p>This stands in for an intranet page or a wiki. Paste the snippet from <strong>Reports &amp; Digests &rarr; Create an embed snippet</strong> and render it.
+     It is served from the same origin the API allows, so the browser lets the widget call the API.</p>
+  <textarea id="snippet" placeholder="Paste the embed snippet here"></textarea>
+  <br><button id="render">Render widget</button>
+  <div id="host"><small>Nothing rendered yet.</small></div>
+  <script>
+    document.getElementById("render").addEventListener("click", function () {
+      var host = document.getElementById("host");
+      host.textContent = "";
+      var doc = new DOMParser().parseFromString(document.getElementById("snippet").value, "text/html");
+      doc.querySelectorAll("script").forEach(function (old) {          // scripts inserted from text do not run, so recreate them
+        var s = document.createElement("script");
+        s.src = old.src;
+        document.head.appendChild(s);
+      });
+      doc.querySelectorAll("adaptive-report").forEach(function (el) { host.appendChild(document.importNode(el, true)); });
+    });
+  </script>
+</body>
+</html>

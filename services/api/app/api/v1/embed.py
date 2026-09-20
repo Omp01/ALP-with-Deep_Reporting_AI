@@ -17,7 +17,7 @@ from datetime import timedelta
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -66,7 +66,7 @@ async def _members(db: AsyncSession, org_id: UUID, user: User, scope: str, scope
 
 
 @router.post("/tokens", status_code=201)
-async def create_embed_token(payload: TokenIn, current_user: User = Depends(get_current_user), tenant_ctx: TenantContext = Depends(get_current_tenant),
+async def create_embed_token(payload: TokenIn, request: Request, current_user: User = Depends(get_current_user), tenant_ctx: TenantContext = Depends(get_current_tenant),
                              db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     if payload.report not in REPORTS or payload.scope not in SCOPES:
         raise HTTPException(status_code=422, detail={"code": "invalid_embed", "message": f"report must be one of {REPORTS} and scope one of {SCOPES}"})
@@ -76,8 +76,9 @@ async def create_embed_token(payload: TokenIn, current_user: User = Depends(get_
         _refuse(exc)
     token = create_access_token(subject=str(current_user.id), expires_delta=timedelta(days=payload.days_valid), claims={
         "purpose": "embed", "org_id": str(tenant_ctx.org_id), "report": payload.report, "scope": payload.scope, "scope_id": str(payload.scope_id) if payload.scope_id else None})
+    api_base = f"{str(request.base_url).rstrip('/')}/api/v1"          # absolute: the snippet is pasted into pages on other hosts
     return {"token": token, "expires_in_days": payload.days_valid, "report": payload.report, "scope": payload.scope,
-            "snippet": f'<script src="/api/v1/embed/adaptive-reporting.js"></script>\n<adaptive-report api="/api/v1" token="{token}" report="{payload.report}"></adaptive-report>'}
+            "snippet": f'<script src="{api_base}/embed/adaptive-reporting.js"></script>\n<adaptive-report api="{api_base}" token="{token}" report="{payload.report}"></adaptive-report>'}
 
 
 @router.get("/data")

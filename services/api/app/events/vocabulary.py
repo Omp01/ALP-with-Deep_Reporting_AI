@@ -168,6 +168,7 @@ SPECS: Dict[str, EventSpec] = {
     E.ADAPTIVE_DECISION_MADE.value: EventSpec(SERVER, (), None, True),
     E.COMPETENCY_UPDATED.value: EventSpec(SERVER, ("competency_id",), None),
     E.RECOMMENDATION_GENERATED.value: EventSpec(SERVER, (), None),
+    E.CHECKIN_COMPLETED.value: EventSpec(SERVER, (), None),
     E.CONTENT_SKIPPED.value: EventSpec(SERVER, ("content_id",), None, True),
     E.CONTENT_RECOMMENDED.value: EventSpec(SERVER, ("content_id",), None, True),
 }

@@ -146,3 +146,11 @@ Residual risks: there is no rate limiting on submit, so a learner can trigger ma
 | Model cost and latency | No model call without findings; identical evidence reuses the stored report; reporting calls have a timeout and failure leaves the deterministic report |
 
 Residual risks: reports are stored with the evidence package (including learner-identifying records for the audience that asked), so they are as sensitive as the data they cite; no rate limiting on report generation (each uncached AI report is a model call); the model provider receives the compact package (a hosted provider means learner-related text leaves the deployment: use a local model to avoid it); embed tokens cannot be revoked individually before they expire (deactivating the issuer revokes all of theirs).
+
+## Login check-in (Phase 11)
+
+- A check-in is readable only by its learner (`404` for peers, managers, administrators and other tenants). The self-report is never in events, team, L&D or organization reports, or embed and BI data.
+- The quiz key is never sent while a check-in is being taken; it is revealed at submit time. Submitting is once-only (row lock and status check).
+- Course text and earlier questions are placed inside a nonce-marked fence in the model prompt and the model is told it is data; questions must quote the material and the quote is verified in code. The coaching note is checked for invented numbers, causal wording and diagnostic language before it is shown.
+- Cost guard: `CHECKIN_MAX_PER_DAY` per learner.
+- The Gemini API key moved from the request URL (which the HTTP library logs) to a header.

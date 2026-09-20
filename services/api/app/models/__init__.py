@@ -27,6 +27,7 @@ from app.models.events import EventOutbox, LearningEvent, LearningSession
 from app.models.risk import LearnerRisk
 from app.models.grading import GradingResult
 from app.models.reporting import AIInsight, ScheduledReport, ReportDigest, Report
+from app.models.checkin import Checkin
 from app.models.ingestion import IngestionJob, QuestionCandidate
 from app.models.quiz import Quiz, QuizQuestion, QuizOption, QuizAttempt, QuestionResponse
 from app.models.progress import ContentProgress, ContentCompetency, AdaptiveDecision
@@ -56,6 +57,7 @@ __all__ = [
     "EvidenceRecord",
     "GradingResult",
     "Report",
+    "Checkin",
     "SkillGap",
     "AssessmentItem",
     "Enrollment",

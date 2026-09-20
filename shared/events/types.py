@@ -55,6 +55,7 @@ class EventType(str, Enum):
     ADAPTIVE_DECISION_MADE = "adaptive_decision_made"
     COMPETENCY_UPDATED = "competency_updated"
     RECOMMENDATION_GENERATED = "recommendation_generated"
+    CHECKIN_COMPLETED = "checkin_completed"      # (server) a login check-in was submitted and scored
 
     # ---- legacy names. Old rows may carry them; new events use the names above.
     QUESTION_VIEWED = "question_viewed"          # now question_shown

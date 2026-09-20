@@ -184,3 +184,15 @@ Reference: `docs/REPORTING_AI.md`. The earlier `/insights/*` and `/reports/diges
 | `GET` | `/api/v1/analytics/learner/{id}`, `/team/{id}`, `/organization`, `/events`, `/competencies` | scoped | Deterministic figures (null when there is nothing behind them) |
 | `POST` `GET` | `/api/v1/reports/schedules`, `/schedules/{id}/run`, `/schedules/run-due`, `/digests`, `/digest/generate`, `/digest/latest` | owner; run-due: admins | Scheduled digests |
 | `POST` `GET` | `/api/v1/embed/tokens`, `/embed/data?token=`, `/embed/adaptive-reporting.js` | manager or admin mints; the token reads one scope | Embeddable widget |
+
+## Login check-in (Phase 11)
+
+Reference: `docs/CHECKIN.md`. For the signed-in learner about themselves; nobody else, whatever their role, can read a check-in.
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/v1/checkins/start` | `{fresh?, course_id?}` -> `202`; a model writes an AI quiz from the learner's course material and a self-report in the background (`generating` -> `ready`, or `failed` with a reason) |
+| `GET` | `/api/v1/checkins/{id}` | Status; the quiz and statements without answers while `ready`; the scored report when `completed` |
+| `POST` | `/api/v1/checkins/{id}/submit` | `{quiz: {question_id: option_id}, self_report: {statement_id: 1-5}}`: scores both, returns the report with the review and source passages |
+| `POST` | `/api/v1/checkins/{id}/skip` | |
+| `GET` | `/api/v1/checkins` | Your check-ins with scores |

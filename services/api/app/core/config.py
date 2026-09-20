@@ -103,6 +103,17 @@ class Settings(BaseSettings):
     grading_correct_threshold: float = 0.70       # signal at or above this shows as "correct" (partial credit is still given)
     grading_max_answer_chars: int = 6000
 
+    # Login check-in: an AI-written quiz on the learner's own course material plus a short self-report (docs/CHECKIN.md)
+    ai_model_checkin: str = ""                    # empty = the provider's default model
+    checkin_question_count: int = 5               # verified quiz questions per check-in
+    checkin_min_questions: int = 3                # fewer verified questions than this and the check-in fails honestly
+    checkin_items_per_construct: int = 3          # self-report statements per measured construct
+    checkin_generation_timeout_seconds: int = 150
+    checkin_max_per_day: int = 20                 # a cost guard on model calls, per learner
+    checkin_history_avoid: int = 4                # earlier check-ins whose questions and passages are avoided
+    checkin_run_inline: bool = False              # tests only: write the check-in inside the request instead of in the background
+    checkin_change_threshold: float = 10.0        # self-report points below which a change is treated as ordinary variation
+
     # Reporting AI (docs/REPORTING_AI.md)
     ai_model_reporting: str = ""                  # empty = the provider's default model
     reporting_timeout_seconds: int = 120

@@ -94,7 +94,14 @@ export default function LoginPage() {
       } else if (data.user.role === "manager" || data.user.role === "instructor") {
         router.push("/manager/dashboard");
       } else {
-        router.push("/learner/dashboard");
+        // Every learner login starts with a fresh AI-written check-in (skippable), then the dashboard.
+        try {
+          sessionStorage.setItem("checkin_pending", "1");
+          sessionStorage.removeItem("checkin_current");
+        } catch {
+          /* without session storage the check-in page simply offers a Start button */
+        }
+        router.push("/learner/checkin");
       }
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred");

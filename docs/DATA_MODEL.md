@@ -105,6 +105,7 @@ erDiagram
 | `learning_sessions` | A period of learning: `started_at`, `last_activity_at`, `ended_at`, `end_reason`, `context`; one open per learner per course | `id` (UUID) | `org_id`, `user_id`, `course_id` |
 | `event_outbox` | Events awaiting delivery to the Redis stream, with attempts and last error | `event_id` (UUID) | `event_id` -> `learning_events(id)` |
 | `learner_risks` | Disengagement / dropout risk flags | `id` (UUID) | `org_id`, `user_id`, `course_id` |
+| `checkins` | Login check-ins: verified AI-written questions with their source passages, self-report statements, answers, scores, report (private to the learner; migration 009) | `id` (UUID) | `org_id`, `learner_id` |
 | `ai_insights` | Grounded AI reports with citations | `id` (UUID) | `org_id`, `scope_id` |
 | `scheduled_reports` | Automated report delivery schedules | `id` (UUID) | `org_id` |
 | `report_digests` | Delivery history of scheduled reports | `id` (UUID) | `org_id`, `scheduled_report_id` |

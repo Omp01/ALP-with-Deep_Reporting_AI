@@ -40,6 +40,7 @@ TASK_ANALYSIS = "analysis"
 TASK_QUESTIONS = "questions"
 TASK_GRADING = "grading"
 TASK_REPORTING = "reporting"
+TASK_CHECKIN = "checkin"
 
 # Tests (and only tests) replace how providers are built.
 _factory_override: Optional[Callable[[str], AIProvider]] = None
@@ -67,7 +68,7 @@ class AIStatus:
 
 
 def _model_for(task: str) -> str:
-    specific = {TASK_ANALYSIS: settings.ai_model_analysis, TASK_QUESTIONS: settings.ai_model_questions, TASK_GRADING: settings.ai_model_grading, TASK_REPORTING: settings.ai_model_reporting}.get(task, "")
+    specific = {TASK_ANALYSIS: settings.ai_model_analysis, TASK_QUESTIONS: settings.ai_model_questions, TASK_GRADING: settings.ai_model_grading, TASK_REPORTING: settings.ai_model_reporting, TASK_CHECKIN: settings.ai_model_checkin}.get(task, "")
     if specific:
         return specific
     # AI_MODEL defaults to an OpenAI model name, which a local Ollama server does not have.

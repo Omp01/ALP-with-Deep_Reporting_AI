@@ -73,3 +73,11 @@ Not verified here (see the limits in [CONTENT_INGESTION.md](CONTENT_INGESTION.md
 ## Adding a provider
 
 Implement `AIProvider`, add a branch in `provider_for` and `ai_status` (`app/ingestion/ai.py`), and document its variables here. Nothing else changes. Tests replace the provider with a scripted double through `set_provider_override`; they never call a real model.
+
+## Notes from running against a real Gemini key
+
+- `AI_MODEL_CHECKIN` (with `AI_MODEL_ANALYSIS`, `AI_MODEL_QUESTIONS`, `AI_MODEL_GRADING`, `AI_MODEL_REPORTING`) is a per-task model. Each provider uses **its own** model setting (`GEMINI_MODEL`, `GROQ_MODEL`, `OLLAMA_MODEL`) unless a task override is set; `AI_MODEL` applies only to an OpenAI-compatible endpoint. Before this was fixed, `AI_MODEL=gpt-4o-mini` was sent to Gemini.
+- Google retires model names (`gemini-1.5-flash` and `gemini-2.5-flash` are unavailable to new keys). List what your key can use with `GET https://generativelanguage.googleapis.com/v1beta/models` and the `x-goog-api-key` header. The default is now `gemini-3.5-flash`.
+- Gemini 2.5 and later "think" first and thinking tokens count against `maxOutputTokens`; the provider adds headroom for those models so JSON answers are not cut off.
+- The Gemini free tier allows about **20 requests per day per model**. A daily-quota error (`429`, `PerDay`) is not retried and the message says so. Give heavy tasks their own model (the check-in uses three calls per login), use a billed key, or use a local model.
+- The API key is sent in the `x-goog-api-key` header, not in the URL, so it does not appear in request logs.

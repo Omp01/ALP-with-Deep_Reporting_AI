@@ -308,7 +308,7 @@ class GeminiProvider(AIProvider):
         if not contents:
             contents.append({"role": "user", "parts": [{"text": "Generate summary"}]})
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"   # the key goes in a header: a URL is logged
         payload: dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
@@ -327,11 +327,19 @@ class GeminiProvider(AIProvider):
         for attempt in range(self.max_retries):
             try:
                 start = time.monotonic()
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers={"x-goog-api-key": self.api_key})
                 latency_ms = int((time.monotonic() - start) * 1000)
 
                 if response.status_code == 429:
+                    if "PerDay" in response.text:
+                        # A daily quota does not clear by waiting a few seconds: fail at once, and say so.
+                        raise AIProviderError(
+                            message=f"Gemini's daily request quota for {self.model} is used up. Try again tomorrow, choose another model, or use a key with billing enabled.",
+                            provider=self.provider_name,
+                            retryable=False,
+                        )
                     import asyncio
+                    last_error = RuntimeError("Gemini is rate limiting requests (429)")
                     await asyncio.sleep(2 ** attempt)
                     continue
 
@@ -358,6 +366,8 @@ class GeminiProvider(AIProvider):
                     finish_reason=candidates[0].get("finishReason", "stop") if candidates else "stop",
                     latency_ms=latency_ms,
                 )
+            except AIProviderError:
+                raise
             except httpx.TimeoutException as e:
                 last_error = e
                 continue

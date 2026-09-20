@@ -140,3 +140,14 @@
 | **Orchestration** | [service.py](file:///d:/ALP-Deep_Report_AI/adaptive-lms/services/api/app/reporting/service.py) | `generate`, `load`, `evidence_detail` | Authorise, build, interpret, validate, store, cache |
 | **APIs** | [reports.py](file:///d:/ALP-Deep_Report_AI/adaptive-lms/services/api/app/api/v1/reports.py), [embed.py](file:///d:/ALP-Deep_Report_AI/adaptive-lms/services/api/app/api/v1/embed.py), [analytics.py](file:///d:/ALP-Deep_Report_AI/adaptive-lms/services/api/app/api/v1/analytics.py), [adaptive.py](file:///d:/ALP-Deep_Report_AI/adaptive-lms/services/api/app/api/v1/adaptive.py) | | Reports, widget, analytics, next step |
 | **Frontend** | `components/reports/report-view.tsx`, `components/player/next-step-card.tsx`, `app/learner/insights`, `app/manager/insights`, `app/manager/reports`, `app/admin/intelligence`, `app/admin/capability` | | Report pages with the evidence drawer; "Why am I seeing this?" |
+
+## Login check-in (Phase 11)
+
+| Layer | File | Purpose |
+|---|---|---|
+| Model / migration | `app/models/checkin.py`, `database/migrations/versions/009_checkins.py` | `checkins` |
+| Quiz | `app/checkin/quiz.py` | Passages from the course's published lessons, sampling that favours unused ones, model call, verification through `ingestion/analysis` |
+| Self-report | `app/checkin/psychometric.py` | Constructs, model prompt, statement validation, scoring and bands |
+| Report | `app/checkin/report.py` | Quiz scoring, observations, the checked coaching note |
+| Service / API | `app/checkin/service.py`, `app/api/v1/checkins.py` | Start (background generation), read, submit, skip, history |
+| Frontend | `frontend/app/learner/checkin/page.tsx`, `frontend/services/checkins.ts` | The check-in page; the login page opens it for learners |
