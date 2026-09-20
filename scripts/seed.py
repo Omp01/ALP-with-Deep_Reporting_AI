@@ -33,7 +33,12 @@ sys.path.insert(0, os.path.join(BASE_DIR, "services", "api"))
 
 from app.core.security import hash_password
 from app.core.database import SessionLocal
+from app.core.rbac import normalize_role
+from app.services.skill_graph import topological_levels
 from app.models import (
+    CompetencyPrerequisite,
+    RoleDefinition,
+    UserRole,
     Organization,
     User,
     Team,
@@ -48,9 +53,52 @@ from app.models import (
     ModuleCompetency,
     AssessmentItem,
     Enrollment,
+    Quiz,
+    QuizQuestion,
+    QuizOption,
+    QuizAttempt,
+    QuestionResponse,
+    ContentProgress,
+    ContentCompetency,
+    AdaptiveDecision,
 )
 
 DEFAULT_PASSWORD_HASH = hash_password("Password123!")
+
+
+def reading_seconds(text: str) -> int:
+    """Estimated reading time at 200 words per minute, in seconds (a stated estimate, not a measurement)."""
+    return max(60, round(len(text.split()) / 200 * 60))
+
+# Bloom's taxonomy level -> default competency difficulty (mirrors migration 003).
+BLOOM_DIFFICULTY = {
+    "remember": 0.10, "understand": 0.25, "apply": 0.50,
+    "analyze": 0.65, "evaluate": 0.80, "create": 0.90,
+}
+
+# The demo curriculum's skill graph: (competency, prerequisite, min_mastery, why).
+# This is authored curriculum data, entered through the same table and constraints
+# as any tenant's skill graph; nothing downstream special-cases these competencies.
+SKILL_GRAPH = [
+    ("python.functions", "python.basics", 0.6, "Functions build on variables, control flow and basic types."),
+    ("python.oop", "python.functions", 0.6, "Classes are built from functions, scope and state."),
+    ("python.async", "python.functions", 0.6, "Coroutines are functions; scope and closures must be solid first."),
+    ("sql.aggregation", "sql.joins", 0.6, "Meaningful aggregation usually runs over joined tables."),
+    ("sql.window_functions", "sql.aggregation", 0.65, "Window functions generalise GROUP BY aggregation."),
+    ("sql.indexing", "sql.joins", 0.6, "Index and plan tuning is driven by join and filter patterns."),
+    ("de.etl_pipelines", "python.functions", 0.6, "Pipeline tasks are written as Python functions."),
+    ("de.etl_pipelines", "sql.joins", 0.6, "Transformations depend on relational joins."),
+    ("de.stream_processing", "de.etl_pipelines", 0.6, "Streaming extends batch pipeline concepts."),
+    ("de.stream_processing", "python.async", 0.6, "Consumers rely on non-blocking I/O."),
+    ("de.data_modeling", "sql.joins", 0.6, "Star schemas are queried with joins."),
+    ("de.data_modeling", "sql.aggregation", 0.6, "Fact tables are consumed through aggregation."),
+    ("ml.supervised", "python.functions", 0.6, "Model code is written in Python."),
+    ("ml.evaluation_metrics", "ml.supervised", 0.6, "Metrics evaluate supervised models."),
+    ("ml.feature_engineering", "ml.supervised", 0.55, "Feature choices are judged by model performance."),
+    ("genai.embeddings", "python.functions", 0.6, "Embedding pipelines are written in Python."),
+    ("genai.rag_architecture", "genai.embeddings", 0.65, "Retrieval is built on embeddings."),
+    ("genai.rag_architecture", "genai.prompt_engineering", 0.6, "Grounded generation depends on prompt design."),
+]
 
 
 def seed_database():
@@ -104,6 +152,10 @@ def seed_database():
             ("frank.learner@technova.com", "Frank Foster", "learner", technova_org.id),
         ]
 
+        role_catalogue = {r.code: r for r in session.query(RoleDefinition).all()}
+        if not role_catalogue:
+            raise RuntimeError("Role catalogue is empty. Run: alembic upgrade head")
+
         u_map = {}
         for email, full_name, role, org_id in user_specs:
             u = session.query(User).filter_by(email=email).first()
@@ -120,6 +172,15 @@ def seed_database():
                 session.add(u)
                 session.flush()
             u_map[email] = u
+
+            # Role assignment lives in user_roles; users.role is the compatibility column.
+            canonical = normalize_role(role)
+            role_def = role_catalogue.get(canonical.value) if canonical else None
+            if role_def is None:
+                raise RuntimeError(f"Role '{role}' is not in the role catalogue. Run: alembic upgrade head")
+            if not session.query(UserRole).filter_by(user_id=u.id, role_id=role_def.id).first():
+                session.add(UserRole(user_id=u.id, role_id=role_def.id, org_id=u.org_id))
+        session.flush()
         print(f"  [OK] Verified {len(u_map)} Users across 5 Roles")
 
         # ---------------------------------------------------------------------
@@ -201,11 +262,29 @@ def seed_database():
                     name=name,
                     description=desc,
                     taxonomy_level=tax,
+                    domain=code.split(".")[0],
+                    difficulty=BLOOM_DIFFICULTY[tax],
                 )
                 session.add(c)
                 session.flush()
             comp_map[code] = c
         print(f"  [OK] Verified {len(comp_map)} Granular Competencies")
+
+        # Skill graph (prerequisites). Idempotent; acyclicity is asserted before commit.
+        for comp_code, prereq_code, min_mastery, rationale in SKILL_GRAPH:
+            comp, prereq = comp_map[comp_code], comp_map[prereq_code]
+            if not session.query(CompetencyPrerequisite).filter_by(
+                competency_id=comp.id, prerequisite_id=prereq.id
+            ).first():
+                session.add(CompetencyPrerequisite(
+                    competency_id=comp.id, prerequisite_id=prereq.id, org_id=acme_org.id,
+                    min_mastery=min_mastery, rationale=rationale,
+                ))
+        session.flush()
+        graph_edges = [(e.competency_id, e.prerequisite_id) for e in
+                       session.query(CompetencyPrerequisite).filter_by(org_id=acme_org.id)]
+        levels = topological_levels([c.id for c in comp_map.values()], graph_edges)  # raises on a cycle
+        print(f"  [OK] Verified skill graph: {len(graph_edges)} prerequisite edges, depth {max(levels.values())}")
 
         # ---------------------------------------------------------------------
         # 5. The 5 Real Courses with Modules, Video, Article, Quiz, Assignment
@@ -216,6 +295,9 @@ def seed_database():
                 "title": "Python Fundamentals & Software Engineering",
                 "code": "PY-FUND-101",
                 "description": "Master clean, idiomatic Python programming from control flow and data structures to object-oriented architecture and asynchronous concurrency.",
+                "category": "Computer Science",
+                "difficulty": "beginner",
+                "thumbnail_url": "https://images.unsplash.com/photo-1526379095098-d400fd0bf935?w=800&auto=format&fit=crop&q=80",
                 "primary_competencies": ["python.basics", "python.functions", "python.oop", "python.async"],
                 "modules": [
                     {
@@ -223,9 +305,9 @@ def seed_database():
                         "description": "Understanding function arguments, lexical scoping, lambda functions, and closures in modern Python.",
                         "sequence": 1,
                         "competency": "python.functions",
-                        "video_title": "Deep Dive: First-Class Functions and Closures in Python",
-                        "video_url": "https://storage.adaptivelms.io/courses/python/module1_functions.mp4",
-                        "video_duration": 480,
+                        "video_title": "How-To: Python Decorators, Closure, Nesting & First Class Functions",
+                        "video_url": "https://www.youtube.com/watch?v=aJc5MuJbOr0",
+                        "video_author": "Mnemonic Academy",
                         "article_title": "Mastering Python Functions: Scope, LEGB Rule, and Closures",
                         "article_text": """# Mastering Python Functions: Scope, LEGB Rule, and Closures
 
@@ -312,9 +394,9 @@ Always use immutable sentinel values (`None`) as default arguments for collectio
                         "description": "Classes, encapsulation, inheritance hierarchy, abstract base classes, and polymorphism.",
                         "sequence": 2,
                         "competency": "python.oop",
-                        "video_title": "Object-Oriented Design and Composition vs Inheritance in Python",
-                        "video_url": "https://storage.adaptivelms.io/courses/python/module2_oop.mp4",
-                        "video_duration": 540,
+                        "video_title": "Python OOP Tutorial 4: Inheritance - Creating Subclasses",
+                        "video_url": "https://www.youtube.com/watch?v=RSl87lqOXDE",
+                        "video_author": "Corey Schafer",
                         "article_title": "Modern Python OOP: Abstract Base Classes, Dunder Methods, and Composition",
                         "article_text": """# Modern Python OOP: Abstract Base Classes, Dunder Methods, and Composition
 
@@ -373,6 +455,9 @@ Python uses the C3 Superconcurrency Linearization algorithm to resolve method in
                 "title": "SQL for Data Analytics & Performance Optimization",
                 "code": "SQL-ANALYTICS-201",
                 "description": "Master advanced relational SQL from complex multi-table joins and analytical window functions to execution plan inspection and index tuning.",
+                "category": "Data Science",
+                "difficulty": "intermediate",
+                "thumbnail_url": "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?w=800&auto=format&fit=crop&q=80",
                 "primary_competencies": ["sql.joins", "sql.aggregation", "sql.window_functions", "sql.indexing"],
                 "modules": [
                     {
@@ -380,9 +465,9 @@ Python uses the C3 Superconcurrency Linearization algorithm to resolve method in
                         "description": "Compute running totals, rankings, moving averages, and lead/lag trends across partitioned datasets.",
                         "sequence": 1,
                         "competency": "sql.window_functions",
-                        "video_title": "Demystifying SQL Window Functions: OVER, PARTITION BY, and Framing",
-                        "video_url": "https://storage.adaptivelms.io/courses/sql/module1_window.mp4",
-                        "video_duration": 600,
+                        "video_title": "SQL Window Functions | Clearly Explained | PARTITION BY, ORDER BY, ROW_NUMBER, RANK, DENSE_RANK",
+                        "video_url": "https://www.youtube.com/watch?v=rIcB4zMYMas",
+                        "video_author": "Maven Analytics",
                         "article_title": "Mastering SQL Window Functions: Real-World Business Analytics",
                         "article_text": """# Mastering SQL Window Functions: Real-World Business Analytics
 
@@ -434,6 +519,9 @@ FROM quiz_submissions;
                 "title": "Data Engineering Fundamentals & Distributed Streaming",
                 "code": "DE-PIPELINES-301",
                 "description": "Build production-grade data pipelines, stream processing systems with Redis Streams/Kafka, and dimensional data models.",
+                "category": "Engineering",
+                "difficulty": "intermediate",
+                "thumbnail_url": "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&auto=format&fit=crop&q=80",
                 "primary_competencies": ["de.etl_pipelines", "de.stream_processing", "de.data_modeling"],
                 "modules": [
                     {
@@ -441,9 +529,9 @@ FROM quiz_submissions;
                         "description": "Partitioning, consumer groups, offsets, and backpressure management in real-time streaming architectures.",
                         "sequence": 1,
                         "competency": "de.stream_processing",
-                        "video_title": "Architecture of Distributed Event Logs and Consumer Groups",
-                        "video_url": "https://storage.adaptivelms.io/courses/de/module1_streams.mp4",
-                        "video_duration": 520,
+                        "video_title": "How do Kafka Consumer Groups and Consumer Offsets work in Apache Kafka?",
+                        "video_url": "https://www.youtube.com/watch?v=9o5LAbPNc28",
+                        "video_author": "Conduktor",
                         "article_title": "Building Resilient Event-Driven Pipelines with Redis Streams",
                         "article_text": """# Building Resilient Event-Driven Pipelines with Redis Streams
 
@@ -489,6 +577,9 @@ Redis Streams provides an append-only, ordered message log with support for Cons
                 "title": "Machine Learning Fundamentals & Statistical Evaluation",
                 "code": "ML-CORE-401",
                 "description": "Understand core supervised algorithms, mathematical loss functions, feature engineering, and rigorous model evaluation.",
+                "category": "Artificial Intelligence",
+                "difficulty": "advanced",
+                "thumbnail_url": "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=800&auto=format&fit=crop&q=80",
                 "primary_competencies": ["ml.supervised", "ml.evaluation_metrics", "ml.feature_engineering"],
                 "modules": [
                     {
@@ -496,9 +587,9 @@ Redis Streams provides an append-only, ordered message log with support for Cons
                         "description": "Evaluating classification models under class imbalance, understanding false positives vs false negatives.",
                         "sequence": 1,
                         "competency": "ml.evaluation_metrics",
-                        "video_title": "Model Evaluation Beyond Accuracy: ROC Curves and F1-Scores",
-                        "video_url": "https://storage.adaptivelms.io/courses/ml/module1_metrics.mp4",
-                        "video_duration": 490,
+                        "video_title": "ROC and AUC, Clearly Explained!",
+                        "video_url": "https://www.youtube.com/watch?v=4jRBRDbJemM",
+                        "video_author": "StatQuest with Josh Starmer",
                         "article_title": "Evaluating Machine Learning Models Under Severe Class Imbalance",
                         "article_text": """# Evaluating Machine Learning Models Under Severe Class Imbalance
 
@@ -545,6 +636,9 @@ When predicting rare events (such as learner dropout or fraud where positive cas
                 "title": "AI & Generative AI: Architecture, RAG & LLM Systems",
                 "code": "GENAI-LLM-501",
                 "description": "Understand transformer foundations, prompt engineering with structured constraints, vector search with pgvector, and grounded RAG systems.",
+                "category": "Artificial Intelligence",
+                "difficulty": "advanced",
+                "thumbnail_url": "https://images.unsplash.com/photo-1677442136019-21780efad99a?w=800&auto=format&fit=crop&q=80",
                 "primary_competencies": ["genai.prompt_engineering", "genai.rag_architecture", "genai.embeddings"],
                 "modules": [
                     {
@@ -552,9 +646,9 @@ When predicting rare events (such as learner dropout or fraud where positive cas
                         "description": "Designing deterministic RAG pipelines, chunking policies, vector indexing, and zero-hallucination citation validation.",
                         "sequence": 1,
                         "competency": "genai.rag_architecture",
-                        "video_title": "Building Production RAG Systems with Deterministic Citation Guardrails",
-                        "video_url": "https://storage.adaptivelms.io/courses/genai/module1_rag.mp4",
-                        "video_duration": 580,
+                        "video_title": "Retrieval Augmented Generation (RAG) Explained: Embedding, Sentence BERT, Vector Database (HNSW)",
+                        "video_url": "https://www.youtube.com/watch?v=rhZgXNdhWDY",
+                        "video_author": "Umar Jamil",
                         "article_title": "Production RAG Architecture: Grounding, Vector Search, and Hallucination Verification",
                         "article_text": """# Production RAG Architecture: Grounding, Vector Search, and Hallucination Verification
 
@@ -598,6 +692,9 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
         ]
 
         # Process each course
+        instructor_user = u_map.get("sarah.instructor@acme.com")
+        instructor_id = instructor_user.id if instructor_user else None
+
         for c_data in courses_data:
             course = session.query(Course).filter_by(code=c_data["code"], org_id=acme_org.id).first()
             if not course:
@@ -608,10 +705,20 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                     code=c_data["code"],
                     description=c_data["description"],
                     status="published",
-                    created_by_id=u_map["sarah.instructor@acme.com"].id,
+                    category=c_data.get("category", "Computer Science"),
+                    difficulty=c_data.get("difficulty", "intermediate"),
+                    thumbnail_url=c_data.get("thumbnail_url"),
+                    created_by_id=instructor_id,
+                    instructor_id=instructor_id,
                     course_metadata={"target_audience": "Engineers & Data Practitioners", "level": "Comprehensive"},
                 )
                 session.add(course)
+                session.flush()
+            else:
+                course.category = c_data.get("category", course.category or "Computer Science")
+                course.difficulty = c_data.get("difficulty", course.difficulty or "intermediate")
+                course.thumbnail_url = c_data.get("thumbnail_url", course.thumbnail_url)
+                course.instructor_id = instructor_id
                 session.flush()
 
             # Course Competencies
@@ -658,11 +765,23 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         description=f"Instructional video lecture for {m_data['title']}",
                         content_type="VIDEO",
                         content_url=m_data["video_url"],
-                        duration_seconds=m_data["video_duration"],
+                        source_type="youtube",
+                        source_url=m_data["video_url"],
+                        duration_seconds=0,  # unknown: YouTube reports the real length to the player at playback
                         order_index=1,
                         status="published",
+                        item_metadata={"provider": "youtube", "author": m_data["video_author"]},
                     )
                     session.add(v_item)
+                    session.flush()
+                else:
+                    # Refresh rows created by earlier seeds, which pointed at a domain that serves nothing.
+                    v_item.title = m_data["video_title"]
+                    v_item.content_url = m_data["video_url"]
+                    v_item.source_type = "youtube"
+                    v_item.source_url = m_data["video_url"]
+                    v_item.duration_seconds = 0
+                    v_item.item_metadata = {"provider": "youtube", "author": m_data["video_author"]}
 
                 # Content Item 2: ARTICLE
                 a_item = session.query(ContentItem).filter_by(module_id=module.id, content_type="ARTICLE").first()
@@ -677,6 +796,8 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         content_type="ARTICLE",
                         text_content=m_data["article_text"],
                         raw_text=m_data["article_text"],
+                        duration_seconds=reading_seconds(m_data["article_text"]),
+                        item_metadata={"duration_basis": "reading_time_estimate"},
                         order_index=2,
                         chunk_count=1,
                         status="published",
@@ -694,8 +815,11 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         token_count=150,
                     )
                     session.add(chunk)
+                elif not a_item.duration_seconds:
+                    a_item.duration_seconds = reading_seconds(a_item.text_content or "")
+                    a_item.item_metadata = {"duration_basis": "reading_time_estimate"}
 
-                # Content Item 3: QUIZ (Assessment Items)
+                # Content Item 3: Assessment Items (Psychometric question bank)
                 for q_spec in m_data["quiz_questions"]:
                     existing_q = session.query(AssessmentItem).filter_by(module_id=module.id, question_text=q_spec["text"]).first()
                     if not existing_q and target_comp:
@@ -717,6 +841,74 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         )
                         session.add(q_item)
 
+                # Quiz & Quiz Questions Model
+                quiz = session.query(Quiz).filter_by(module_id=module.id).first()
+                if not quiz and m_data.get("quiz_questions"):
+                    quiz = Quiz(
+                        id=uuid.uuid4(),
+                        org_id=acme_org.id,
+                        course_id=course.id,
+                        module_id=module.id,
+                        title=f"Quiz: {m_data['title']}",
+                        description=f"Knowledge verification and mastery assessment for {m_data['title']}",
+                        time_limit_mins=20,
+                        passing_score=70.0,
+                        max_attempts=3,
+                        is_adaptive=False,
+                    )
+                    session.add(quiz)
+                    session.flush()
+
+                    for q_idx, q_spec in enumerate(m_data["quiz_questions"]):
+                        qq = QuizQuestion(
+                            id=uuid.uuid4(),
+                            quiz_id=quiz.id,
+                            competency_id=target_comp.id if target_comp else None,
+                            question_text=q_spec["text"],
+                            question_type="multiple_choice",
+                            points=10,
+                            order_index=q_idx,
+                            explanation=q_spec.get("explanation"),
+                        )
+                        session.add(qq)
+                        session.flush()
+
+                        for o_idx, opt in enumerate(q_spec["options"]):
+                            is_corr = (opt["id"] == q_spec["correct"].get("answer"))
+                            qo = QuizOption(
+                                id=uuid.uuid4(),
+                                question_id=qq.id,
+                                option_text=opt["text"],
+                                is_correct=is_corr,
+                                order_index=o_idx,
+                                explanation=q_spec.get("explanation") if is_corr else None,
+                            )
+                            session.add(qo)
+
+                # Content Item for QUIZ (so it appears in module curriculum syllabus)
+                quiz_item = session.query(ContentItem).filter_by(module_id=module.id, content_type="QUIZ").first()
+                if not quiz_item and quiz:
+                    quiz_item = ContentItem(
+                        id=uuid.uuid4(),
+                        org_id=acme_org.id,
+                        course_id=course.id,
+                        module_id=module.id,
+                        title=f"Assessment: {m_data['title']}",
+                        description=f"Curriculum assessment quiz for {m_data['title']}",
+                        content_type="QUIZ",
+                        duration_seconds=quiz.time_limit_mins * 60,  # the configured time limit
+                        order_index=3,
+                        status="published",
+                        item_metadata={"quiz_id": str(quiz.id)},
+                    )
+                    session.add(quiz_item)
+                    session.flush()
+                if quiz and quiz_item:
+                    if quiz.content_item_id is None:
+                        quiz.content_item_id = quiz_item.id  # explicit link (unique)
+                    quiz_item.duration_seconds = quiz.time_limit_mins * 60
+                    session.flush()
+
                 # Content Item 4: ASSIGNMENT
                 asg_spec = m_data.get("assignment")
                 if asg_spec:
@@ -737,11 +929,35 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         )
                         session.add(assignment)
 
+                # The assignment is presented in the outline as its own lesson item.
+                if asg_spec:
+                    assignment_row = session.query(Assignment).filter_by(module_id=module.id, title=asg_spec["title"]).first()
+                    if assignment_row and assignment_row.content_item_id is None:
+                        asg_item = ContentItem(
+                            id=uuid.uuid4(), org_id=acme_org.id, course_id=course.id, module_id=module.id,
+                            title=f"Lab: {asg_spec['title']}",
+                            description=f"Hands-on assignment for {m_data['title']}",
+                            content_type="ASSIGNMENT", duration_seconds=0, order_index=4, status="published",
+                            item_metadata={"assignment_id": str(assignment_row.id)},
+                        )
+                        session.add(asg_item)
+                        session.flush()
+                        assignment_row.content_item_id = asg_item.id
+                        session.flush()
+
+                # Content Competencies mappings
+                if target_comp:
+                    for ci in [v_item, a_item, quiz_item]:
+                        if ci:
+                            existing_cc = session.query(ContentCompetency).filter_by(content_item_id=ci.id, competency_id=target_comp.id).first()
+                            if not existing_cc:
+                                session.add(ContentCompetency(content_item_id=ci.id, competency_id=target_comp.id, weight=1.0))
+
         session.commit()
         print("  [OK] Seeded 5 Full Production Courses with 4 Modalities (Video, Article, Quiz, Lab)!")
 
         # ---------------------------------------------------------------------
-        # 6. Enroll Learners into all 5 Courses
+        # 6. Enroll Learners into all 5 Courses & Seed Realistic Progress
         # ---------------------------------------------------------------------
         all_courses = session.query(Course).filter_by(org_id=acme_org.id).all()
         acme_learners = [
@@ -766,9 +982,91 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         last_activity_at=datetime.utcnow(),
                     )
                     session.add(enr)
+        session.flush()
+
+        # Seed rich progress for Alice in Python course (PY-FUND-101)
+        alice = u_map["alice.learner@acme.com"]
+        py_course = session.query(Course).filter_by(code="PY-FUND-101", org_id=acme_org.id).first()
+        if py_course:
+            alice_py_enr = session.query(Enrollment).filter_by(user_id=alice.id, course_id=py_course.id).first()
+            if alice_py_enr:
+                alice_py_enr.progress_pct = 35.0
+                alice_py_enr.last_activity_at = datetime.utcnow()
+
+            # Find module 1 items and complete them
+            py_m1 = session.query(Module).filter_by(course_id=py_course.id, sequence_order=1).first()
+            if py_m1:
+                # Assignments complete only through a submission, so demo history skips them.
+                m1_items = [i for i in session.query(ContentItem).filter_by(module_id=py_m1.id).all()
+                            if i.content_type != "ASSIGNMENT"]
+                for item in m1_items:
+                    cp = session.query(ContentProgress).filter_by(user_id=alice.id, content_item_id=item.id).first()
+                    if not cp:
+                        cp = ContentProgress(
+                            id=uuid.uuid4(),
+                            org_id=alice.org_id,
+                            user_id=alice.id,
+                            content_item_id=item.id,
+                            status="completed",
+                            progress_percent=100.0,
+                            time_spent_seconds=item.duration_seconds or 420,
+                            last_accessed_at=datetime.utcnow() - timedelta(hours=2),
+                            completed_at=datetime.utcnow() - timedelta(hours=2),
+                        )
+                        session.add(cp)
+
+                # Record successful quiz attempt for module 1 quiz
+                py_quiz = session.query(Quiz).filter_by(module_id=py_m1.id).first()
+                if py_quiz:
+                    q_att = session.query(QuizAttempt).filter_by(quiz_id=py_quiz.id, user_id=alice.id).first()
+                    if not q_att:
+                        q_att = QuizAttempt(
+                            id=uuid.uuid4(),
+                            quiz_id=py_quiz.id,
+                            user_id=alice.id,
+                            score=100.0,
+                            passed=True,
+                            attempt_number=1,
+                            started_at=datetime.utcnow() - timedelta(hours=3),
+                            completed_at=datetime.utcnow() - timedelta(hours=2, minutes=45),
+                        )
+                        session.add(q_att)
+                        session.flush()
+
+                        for qq in py_quiz.questions:
+                            corr_opt = next((o for o in qq.options if o.is_correct), None)
+                            if corr_opt:
+                                resp = QuestionResponse(
+                                    id=uuid.uuid4(),
+                                    attempt_id=q_att.id,
+                                    question_id=qq.id,
+                                    selected_option_id=corr_opt.id,
+                                    is_correct=True,
+                                    points_awarded=float(qq.points),
+                                )
+                                session.add(resp)
+
+            # Module 2 video in progress
+            py_m2 = session.query(Module).filter_by(course_id=py_course.id, sequence_order=2).first()
+            if py_m2:
+                m2_video = session.query(ContentItem).filter_by(module_id=py_m2.id, content_type="VIDEO").first()
+                if m2_video:
+                    cp2 = session.query(ContentProgress).filter_by(user_id=alice.id, content_item_id=m2_video.id).first()
+                    if not cp2:
+                        cp2 = ContentProgress(
+                            id=uuid.uuid4(),
+                            org_id=alice.org_id,
+                            user_id=alice.id,
+                            content_item_id=m2_video.id,
+                            status="in_progress",
+                            progress_percent=45.0,
+                            time_spent_seconds=240,
+                            last_accessed_at=datetime.utcnow() - timedelta(minutes=30),
+                        )
+                        session.add(cp2)
 
         session.commit()
-        print(f"  [OK] Enrolled {len(acme_learners)} Learners in {len(all_courses)} Real Courses.")
+        print(f"  [OK] Enrolled {len(acme_learners)} Learners and seeded realistic progress & quiz attempts.")
         print("\nStage 2 Database Seeding Completed Successfully! 100% Dynamic.")
 
     except Exception as e:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
 from app.core.database import get_db
+from app.services import progress as progress_service
 from app.models import Enrollment, Course, User
 from app.schemas.enrollment import (
     EnrollmentCreate,
@@ -143,7 +144,13 @@ async def update_progress(
     tenant_ctx: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update learner completion progress."""
+    """
+    Refresh an enrollment, or drop / re-activate it.
+
+    Progress can no longer be set by the caller: it is derived from completed lesson
+    items (app/services/progress.py). `progress_pct` in the body is ignored. Only the
+    learner themself may change an enrollment's status.
+    """
     result = await db.execute(
         select(Enrollment).where(and_(Enrollment.id == enrollment_id, Enrollment.org_id == tenant_ctx.org_id))
     )
@@ -151,17 +158,14 @@ async def update_progress(
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
 
-    if current_user.role == "learner" and enrollment.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to modify another learner's enrollment")
-
-    enrollment.progress_pct = payload.progress_pct
-    enrollment.last_activity_at = datetime.utcnow()
+    if enrollment.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the enrolled learner can change an enrollment")
 
     if payload.status:
         enrollment.status = payload.status
-    elif payload.progress_pct >= 100.0:
-        enrollment.status = "completed"
-        enrollment.completed_at = datetime.utcnow()
+    await progress_service.sync_enrollment(db, tenant_ctx.org_id, enrollment.user_id, enrollment.course_id)
+    if payload.status == "dropped":  # sync recomputes status from progress; a drop must stick
+        enrollment.status = "dropped"
 
     await db.flush()
     return enrollment

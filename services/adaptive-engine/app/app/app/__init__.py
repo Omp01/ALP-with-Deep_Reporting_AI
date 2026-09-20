@@ -1,1 +1,0 @@
-# Adaptive Engine app package

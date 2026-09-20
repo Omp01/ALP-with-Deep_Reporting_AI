@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 
 /**
  * Transient feedback about an action the user just took — "Enrolled",
@@ -52,6 +53,8 @@ export function useToastContext(): ToastContextValue {
   }
   return ctx;
 }
+
+export const useToast = useToastContext;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
@@ -111,9 +114,7 @@ function ToastViewport({
   toasts: Toast[];
   onDismiss: (id: string) => void;
 }) {
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-
+  const mounted = useIsMounted();
   if (!mounted) return null;
 
   return createPortal(

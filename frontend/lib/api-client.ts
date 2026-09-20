@@ -32,6 +32,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Skip the Authorization header (used by the login call itself). */
   anonymous?: boolean;
+  /** Let the request finish even if the page is closed meanwhile (small bodies only). */
+  keepalive?: boolean;
 }
 
 /**
@@ -143,6 +145,18 @@ async function toApiError(response: Response): Promise<ApiError> {
   if (typeof detail === "string") {
     return new ApiError(detail, response.status, "api_error");
   }
+  // Structured detail, e.g. {"code": "prerequisite_cycle", "message": "...", "cycle": [...]}.
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const structuredDetail = detail as { code?: string; message?: string };
+    if (typeof structuredDetail.message === "string") {
+      return new ApiError(
+        structuredDetail.message,
+        response.status,
+        structuredDetail.code ?? "api_error",
+        detail
+      );
+    }
+  }
   if (Array.isArray(detail)) {
     const first = detail[0] as { msg?: string; loc?: unknown[] } | undefined;
     const field = Array.isArray(first?.loc) ? first.loc.slice(1).join(".") : "";
@@ -205,6 +219,7 @@ class ApiClient {
             ? JSON.stringify(body)
             : undefined,
         signal: controller.signal,
+        keepalive: options.keepalive,
       });
     } catch (err) {
       if ((err as Error)?.name === "AbortError") {
@@ -254,6 +269,43 @@ class ApiClient {
 
   delete<T>(path: string, options?: RequestOptions): Promise<T> {
     return this.request<T>("DELETE", path, undefined, options);
+  }
+
+  /**
+   * Fetch a binary resource (an uploaded PDF or video) with the session token.
+   * A plain <iframe src> or <video src> cannot send an Authorization header, so
+   * the bytes are fetched here and handed to the element as an object URL.
+   */
+  async getBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+    const { timeoutMs = 60_000, signal } = options;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", () => controller.abort());
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(buildUrl(path, options.params), {
+        headers: this.headers(false, false),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") {
+        throw new ApiError("Download timed out", 0, "timeout");
+      }
+      throw new ApiError("Network request failed", 0, "network_error");
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      const error = await toApiError(response);
+      if (error.isUnauthorized) clearSession();
+      throw error;
+    }
+    return response.blob();
   }
 
   /** Multipart upload. Content-Type is left unset so the browser adds the boundary. */

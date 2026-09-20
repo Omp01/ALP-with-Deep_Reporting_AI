@@ -4,7 +4,7 @@ Assignment and AssignmentSubmission models for hands-on labs and project evaluat
 
 from datetime import datetime
 import uuid
-from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, Integer
+from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Index, Text, Integer, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -16,12 +16,17 @@ class Assignment(Base):
     Hands-on assignment, practical lab, or project with structured evaluation rubric.
     """
     __tablename__ = "assignments"
+    __table_args__ = (
+        Index("uq_assignments_content_item", "content_item_id", unique=True, postgresql_where=text("content_item_id IS NOT NULL")),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
     module_id = Column(UUID(as_uuid=True), ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
     competency_id = Column(UUID(as_uuid=True), ForeignKey("competencies.id", ondelete="SET NULL"), nullable=True, index=True)
+    # The lesson item that presents this assignment in the course outline (unique when set).
+    content_item_id = Column(UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False)
     instructions = Column(Text, nullable=False)
     difficulty = Column(String(50), default="intermediate", nullable=False)  # beginner, intermediate, advanced

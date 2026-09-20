@@ -15,7 +15,7 @@ from app.core.security import (
     create_access_token,
     decode_access_token,
 )
-from app.models import User, Organization, UserTeam
+from app.models import User, Organization, UserRole, UserTeam
 from app.schemas.auth import (
     LoginRequest,
     RefreshTokenRequest,
@@ -24,39 +24,9 @@ from app.schemas.auth import (
     TenantInfo,
 )
 from app.api.deps import get_current_user, log_audit_action
+from app.services.user_profiles import build_user_profile as _build_user_profile
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-def _build_user_profile(user: User) -> UserProfileResponse:
-    """Helper to convert a User ORM instance into UserProfileResponse."""
-    org_info = None
-    if user.organization:
-        org_info = TenantInfo(
-            id=user.organization.id,
-            name=user.organization.name,
-            slug=user.organization.slug,
-            is_active=user.organization.is_active,
-        )
-
-    team_names = []
-    if user.team_memberships:
-        for tm in user.team_memberships:
-            if tm.team:
-                team_names.append(tm.team.name)
-
-    return UserProfileResponse(
-        id=user.id,
-        org_id=user.org_id,
-        email=user.email,
-        full_name=user.full_name,
-        role=user.role,
-        avatar_url=user.avatar_url,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        organization=org_info,
-        teams=team_names,
-    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -75,6 +45,7 @@ async def login(
         .options(
             selectinload(User.organization),
             selectinload(User.team_memberships).selectinload(UserTeam.team),
+            selectinload(User.role_links).selectinload(UserRole.role),
         )
     )
 
@@ -147,6 +118,11 @@ async def refresh_token(
     Refresh an expired access token using a valid token or refresh token.
     """
     token_data = decode_access_token(payload.refresh_token)
+    if not token_data or token_data.get("purpose"):        # an embed token can never be exchanged for a session
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
     if not token_data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -166,6 +142,7 @@ async def refresh_token(
         .options(
             selectinload(User.organization),
             selectinload(User.team_memberships).selectinload(UserTeam.team),
+            selectinload(User.role_links).selectinload(UserRole.role),
         )
     )
     result = await db.execute(query)

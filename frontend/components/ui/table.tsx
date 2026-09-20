@@ -61,13 +61,15 @@ export function TR({
   children,
   className,
   onClick,
+  ...rest
 }: {
   children: React.ReactNode;
   className?: string;
   onClick?: () => void;
-}) {
+} & Omit<React.HTMLAttributes<HTMLTableRowElement>, "onClick" | "className" | "children">) {
   return (
     <tr
+      {...rest}
       onClick={onClick}
       className={cn(
         "border-b border-border last:border-0",

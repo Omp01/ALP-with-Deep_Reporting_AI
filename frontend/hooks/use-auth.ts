@@ -1,20 +1,20 @@
-"use client";
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 import {
-  SESSION_CHANGED_EVENT,
   clearSession,
-  getSessionUser,
+  getSessionSnapshot,
+  getServerSessionSnapshot,
   getToken,
   homeRouteForRole,
   isAdminRole,
   isLearnerRole,
   isManagerRole,
+  subscribeToSession,
   type Role,
   type SessionUser,
 } from "@/lib/auth";
+import { useIsMounted } from "./use-is-mounted";
 
 export interface UseAuthResult {
   user: SessionUser | null;
@@ -31,35 +31,21 @@ export interface UseAuthResult {
 }
 
 /**
- * The session, as React state.
+ * The session, as React state via useSyncExternalStore.
  *
  * Replaces the `useEffect` + `localStorage.getItem` + `JSON.parse` block that
  * every page previously repeated. It also listens for session changes — both
  * from this tab (login, logout, a 401 clearing the token) and from other tabs
  * via the `storage` event — so signing out in one tab logs the others out too.
- *
- * `ready` exists because storage is unavailable during the server render. A
- * component that redirects on `!user` without checking `ready` will bounce
- * every authenticated user to /login on first paint.
  */
 export function useAuth(): UseAuthResult {
   const router = useRouter();
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const sync = () => setUser(getSessionUser());
-
-    sync();
-    setReady(true);
-
-    window.addEventListener(SESSION_CHANGED_EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(SESSION_CHANGED_EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
+  const ready = useIsMounted();
+  const user = useSyncExternalStore(
+    subscribeToSession,
+    getSessionSnapshot,
+    getServerSessionSnapshot
+  );
 
   const logout = useCallback(() => {
     clearSession();

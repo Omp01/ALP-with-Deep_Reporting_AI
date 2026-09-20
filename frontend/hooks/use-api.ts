@@ -56,13 +56,15 @@ export function useApi<T>(
   const { deps = [], enabled = true, isEmpty: isEmptyFn = defaultIsEmpty } = options;
 
   const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(enabled);
+  const [internalLoading, setInternalLoading] = useState(enabled);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<ApiError | Error | null>(null);
 
   // Held in refs so `run` stays referentially stable across renders.
   const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  });
   const hasLoaded = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -72,7 +74,7 @@ export function useApi<T>(
     controllerRef.current = controller;
 
     if (hasLoaded.current) setRefreshing(true);
-    else setLoading(true);
+    else setInternalLoading(true);
     setError(null);
 
     try {
@@ -87,7 +89,7 @@ export function useApi<T>(
       setError(err instanceof Error ? err : new Error("Request failed"));
     } finally {
       if (!controller.signal.aborted) {
-        setLoading(false);
+        setInternalLoading(false);
         setRefreshing(false);
       }
     }
@@ -95,13 +97,14 @@ export function useApi<T>(
 
   useEffect(() => {
     if (!enabled) {
-      setLoading(false);
       return;
     }
-    void run();
+    void Promise.resolve().then(run);
     return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- caller-supplied deps
   }, [enabled, run, ...deps]);
+
+  const loading = enabled && internalLoading;
 
   return {
     data,
@@ -138,9 +141,11 @@ export function useMutation<TArgs extends unknown[], TResult>(
   const [error, setError] = useState<ApiError | Error | null>(null);
 
   const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
   const mutatorRef = useRef(mutator);
-  mutatorRef.current = mutator;
+  useEffect(() => {
+    handlersRef.current = handlers;
+    mutatorRef.current = mutator;
+  });
 
   const mutate = useCallback(async (...args: TArgs) => {
     setLoading(true);

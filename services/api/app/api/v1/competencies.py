@@ -32,6 +32,7 @@ router = APIRouter(tags=["Competencies & Taxonomy"])
 @router.get("/competencies", response_model=List[CompetencyResponse])
 async def list_competencies(
     taxonomy_level: Optional[str] = None,
+    domain: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
@@ -47,6 +48,8 @@ async def list_competencies(
     )
     if taxonomy_level:
         query = query.where(Competency.taxonomy_level == taxonomy_level)
+    if domain:
+        query = query.where(Competency.domain == domain)
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -55,7 +58,7 @@ async def list_competencies(
 @router.post("/competencies", response_model=CompetencyResponse, status_code=status.HTTP_201_CREATED)
 async def create_competency(
     payload: CompetencyCreate,
-    current_user: User = Depends(require_roles(["instructor", "org_admin"])),
+    current_user: User = Depends(require_roles(["ld_admin", "org_admin"])),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
@@ -73,10 +76,55 @@ async def create_competency(
         description=payload.description,
         taxonomy_level=payload.taxonomy_level,
         parent_id=payload.parent_id,
+        domain=payload.domain,
+        difficulty=payload.difficulty,
+        competency_metadata=payload.competency_metadata,
     )
     db.add(competency)
     await db.flush()
     return competency
+
+
+@router.put("/competencies/{competency_id}", response_model=CompetencyResponse)
+async def update_competency(
+    competency_id: UUID,
+    payload: CompetencyUpdate,
+    current_user: User = Depends(require_roles(["ld_admin", "org_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a competency's descriptive fields (name, domain, difficulty, ...)."""
+    result = await db.execute(
+        select(Competency).where(and_(Competency.id == competency_id, Competency.org_id == tenant_ctx.org_id))
+    )
+    comp = result.scalar_one_or_none()
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competency not found")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if "code" in changes and changes["code"] != comp.code:
+        clash = await db.execute(
+            select(Competency).where(and_(Competency.org_id == tenant_ctx.org_id, Competency.code == changes["code"]))
+        )
+        if clash.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Competency code '{changes['code']}' already exists")
+    if changes.get("parent_id") == competency_id:
+        raise HTTPException(status_code=400, detail="A competency cannot be its own parent")
+    if changes.get("parent_id"):
+        parent = await db.execute(
+            select(Competency.id).where(
+                and_(Competency.id == changes["parent_id"], Competency.org_id == tenant_ctx.org_id)
+            )
+        )
+        if parent.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Parent competency not found")
+
+    for field, value in changes.items():
+        if value is None and field in ("name", "code", "taxonomy_level", "difficulty", "competency_metadata"):
+            continue  # these columns are NOT NULL; ignore an explicit null rather than 500
+        setattr(comp, field, value)
+    await db.flush()
+    return comp
 
 
 @router.get("/competencies/{competency_id}", response_model=CompetencyResponse)

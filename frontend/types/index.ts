@@ -23,6 +23,18 @@ export type UserRole =
   | "manager"
   | "learner";
 
+/**
+ * Canonical role codes as returned in `roles` by the API (`GET /roles`).
+ * `UserRole` above is the legacy spelling still stored in `users.role`:
+ * instructor = ld_admin, system_admin = super_admin.
+ */
+export type CanonicalRole =
+  | "learner"
+  | "manager"
+  | "ld_admin"
+  | "org_admin"
+  | "super_admin";
+
 export type Difficulty = "beginner" | "intermediate" | "advanced";
 
 /**
@@ -36,7 +48,9 @@ export type ContentType =
   | "ASSIGNMENT"
   | "DOCUMENT"
   | "TEXT";
-export type ContentStatus = "processing" | "ready" | "error";
+/** Mirrors the `ck_content_items_status` database constraint. */
+export type ContentStatus = "draft" | "processing" | "review" | "published" | "failed";
+export type ContentSource = "authored" | "upload" | "youtube" | "url";
 export type CourseStatus = "draft" | "published" | "archived";
 export type CompetencyTrend = "improving" | "stable" | "declining";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
@@ -321,3 +335,46 @@ export interface ApiError {
     details?: Record<string, unknown>;
   };
 }
+
+// =============================================================================
+// Skill graph (services/api/app/schemas/competency.py)
+// =============================================================================
+
+export interface SkillGraphNode {
+  id: string;
+  code: string;
+  name: string;
+  domain: string | null;
+  /** 0 (easiest) to 1 (hardest). */
+  difficulty: number;
+  taxonomy_level: string;
+  /** Depth in the graph; 0 means no prerequisites. */
+  level: number;
+  prerequisite_ids: string[];
+  dependent_ids: string[];
+}
+
+export interface Prerequisite {
+  competency_id: string;
+  prerequisite_id: string;
+  /** Mastery (0..1) of the prerequisite at which the dependent competency is unblocked. */
+  min_mastery: number;
+  rationale: string | null;
+}
+
+export interface SkillGraph {
+  nodes: SkillGraphNode[];
+  edges: Prerequisite[];
+  domains: string[];
+  max_level: number;
+}
+
+/** `details` of the ApiError raised when a prerequisite would create a loop. */
+export interface PrerequisiteCycleDetail {
+  code: "prerequisite_cycle";
+  message: string;
+  /** Competency ids of the loop; first and last are the same. */
+  cycle: string[];
+}
+
+export * from "./learning";

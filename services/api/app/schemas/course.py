@@ -7,6 +7,10 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+# Content lifecycle. Ingestion (Phase 3) moves items draft -> processing -> review -> published.
+CONTENT_STATUS_PATTERN = r"^(draft|processing|review|published|failed)$"
+CONTENT_SOURCE_PATTERN = r"^(authored|upload|youtube|url)$"
+
 
 # -----------------------------------------------------------------------------
 # Content Items
@@ -19,9 +23,11 @@ class ContentItemCreate(BaseModel):
     text_content: Optional[str] = None
     raw_text: Optional[str] = None
     transcript: Optional[str] = None
-    duration_seconds: int = 0
-    order_index: int = 0
-    status: str = "published"
+    duration_seconds: int = Field(0, ge=0)
+    order_index: int = Field(0, ge=0)
+    status: str = Field("published", pattern=CONTENT_STATUS_PATTERN)
+    source_type: str = Field("authored", pattern=CONTENT_SOURCE_PATTERN)
+    source_url: Optional[str] = Field(None, max_length=2048)
     item_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -41,6 +47,9 @@ class ContentItemResponse(BaseModel):
     order_index: int = 0
     chunk_count: int = 0
     status: str = "published"
+    source_type: str = "authored"
+    source_url: Optional[str] = None
+    analysis: Optional[Dict[str, Any]] = None
     item_metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
@@ -90,6 +99,10 @@ class CourseCreate(BaseModel):
     code: str = Field(..., max_length=50)
     description: Optional[str] = None
     status: str = "draft"
+    category: str = "Computer Science"
+    difficulty: str = "intermediate"
+    duration_minutes: Optional[int] = Field(None, ge=0, description="Optional override; computed from content when omitted")
+    thumbnail_url: Optional[str] = None
     course_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -98,6 +111,10 @@ class CourseUpdate(BaseModel):
     code: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    category: Optional[str] = None
+    difficulty: Optional[str] = None
+    duration_minutes: Optional[int] = Field(None, ge=0)
+    thumbnail_url: Optional[str] = None
     course_metadata: Optional[Dict[str, Any]] = None
 
 
@@ -108,6 +125,18 @@ class CourseResponse(BaseModel):
     code: str
     description: Optional[str] = None
     status: str
+    category: str = "Computer Science"
+    difficulty: str = "intermediate"
+    # None when no real data exists. Never a placeholder value.
+    rating: Optional[float] = None
+    duration_minutes: Optional[int] = None
+    enrollment_count: int = 0
+    skills: List[str] = Field(default_factory=list, description="Names of the competencies this course develops")
+    thumbnail_url: Optional[str] = None
+    instructor_id: Optional[UUID] = None
+    instructor_name: Optional[str] = None
+    is_enrolled: Optional[bool] = None
+    progress_pct: Optional[float] = None
     created_by_id: Optional[UUID] = None
     course_metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

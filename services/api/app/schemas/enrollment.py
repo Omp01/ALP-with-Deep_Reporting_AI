@@ -14,8 +14,9 @@ class EnrollmentCreate(BaseModel):
 
 
 class EnrollmentProgressUpdate(BaseModel):
-    progress_pct: float = Field(..., ge=0.0, le=100.0)
-    status: Optional[str] = Field(None, description="active, completed, dropped")
+    # Deprecated and ignored: progress is derived from completed lesson items and cannot be set.
+    progress_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+    status: Optional[str] = Field(None, pattern=r"^(active|dropped)$", description="active or dropped")
 
 
 class EnrollmentResponse(BaseModel):

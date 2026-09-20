@@ -69,6 +69,7 @@ export { Tooltip } from "./tooltip";
 export {
   ToastProvider,
   useToastContext,
+  useToast,
   type Toast,
   type ToastInput,
   type ToastVariant,

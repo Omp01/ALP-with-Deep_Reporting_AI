@@ -149,15 +149,16 @@ async def test_learner_enrollment_and_progress_flow():
         enrollment_id = enroll_resp.json()["id"]
         assert enroll_resp.json()["progress_pct"] == 0.0
 
-        # Learner updates progress
+        # A learner cannot declare themselves complete: progress is derived from completed
+        # lesson items, so a claimed 100% changes nothing.
         progress_resp = await client.put(
             f"/enrollments/{enrollment_id}/progress",
             headers={"Authorization": f"Bearer {learner_token}"},
             json={"progress_pct": 100.0},
         )
         assert progress_resp.status_code == 200
-        assert progress_resp.json()["progress_pct"] == 100.0
-        assert progress_resp.json()["status"] == "completed"
+        assert progress_resp.json()["progress_pct"] == 0.0
+        assert progress_resp.json()["status"] == "active"
 
 
 @pytest.mark.asyncio

@@ -49,8 +49,7 @@ export function Avatar({
 
   if (src && !failed) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- avatar URLs are
-      // arbitrary remote hosts; next/image would need every one allow-listed.
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={src}
         alt=""

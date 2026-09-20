@@ -37,7 +37,8 @@ class UserProfileResponse(BaseModel):
     org_id: UUID
     email: str
     full_name: str
-    role: str
+    role: str  # legacy spelling of the primary role (instructor, system_admin, ...)
+    roles: List[str] = Field(default_factory=list)  # canonical role codes, most privileged first
     avatar_url: Optional[str] = None
     is_active: bool
     created_at: datetime

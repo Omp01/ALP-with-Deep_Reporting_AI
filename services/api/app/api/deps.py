@@ -2,19 +2,41 @@
 FastAPI dependencies for Authentication, Multi-Tenancy, and RBAC guards.
 """
 
-from typing import Optional, List, Callable
+import logging
+from typing import Optional, List, Callable, Set
 from uuid import UUID
 from fastapi import Depends, HTTPException, Header, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import inspect as sa_inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.rbac import Role, has_any_role, normalize_role, normalize_roles
 from app.core.security import decode_access_token
-from app.models import User, Organization, AuditLog, UserTeam
+from app.models import User, Organization, AuditLog, UserRole, UserTeam
+
+logger = logging.getLogger("api.authz")
 
 security_scheme = HTTPBearer(auto_error=False)
+
+
+def effective_roles(user: User) -> Set[Role]:
+    """
+    The user's canonical role set.
+
+    `user_roles` is authoritative. When it has not been loaded for this instance
+    (a user fetched without `selectinload(User.role_links)`), or the user has no
+    assignments yet, fall back to the legacy `users.role` column so that a user
+    never silently loses access. Reading an unloaded relationship in async code
+    would raise, hence the `unloaded` check.
+    """
+    if "role_links" not in sa_inspect(user).unloaded:
+        assigned = normalize_roles(link.role.code for link in user.role_links if link.role)
+        if assigned:
+            return assigned
+    legacy = normalize_role(user.role)
+    return {legacy} if legacy else set()
 
 
 class TenantContext:
@@ -48,6 +70,13 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if payload.get("purpose"):       # an embed token is not an access token: it works only on /embed/data
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id_str: str = payload.get("sub")
     if not user_id_str:
         raise HTTPException(
@@ -71,6 +100,7 @@ async def get_current_user(
         .options(
             selectinload(User.organization),
             selectinload(User.team_memberships).selectinload(UserTeam.team),
+            selectinload(User.role_links).selectinload(UserRole.role),
         )
     )
     result = await db.execute(query)
@@ -108,7 +138,7 @@ async def get_current_tenant(
     - If user is system_admin, they can explicitly pass X-Tenant-ID to switch scope.
     - Standard users are strictly bound to their user.org_id.
     """
-    if current_user.role == "system_admin" and x_tenant_id:
+    if Role.SUPER_ADMIN in effective_roles(current_user) and x_tenant_id:
         try:
             target_org_id = UUID(x_tenant_id)
             query = select(Organization).where(Organization.id == target_org_id)
@@ -133,16 +163,22 @@ async def get_current_tenant(
 def require_roles(allowed_roles: List[str]) -> Callable:
     """
     Dependency factory to enforce Role-Based Access Control (RBAC).
-    'system_admin' role inherently has superuser access to all endpoints.
+    Accepts canonical (`ld_admin`, `super_admin`) and legacy (`instructor`,
+    `system_admin`) spellings interchangeably. `super_admin` always passes.
     """
     async def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role == "system_admin":
-            return current_user
-
-        if current_user.role not in allowed_roles:
+        held = effective_roles(current_user)
+        if not has_any_role(held, allowed_roles):
+            logger.warning(
+                '{"event": "authorization_denied", "user_id": "%s", "org_id": "%s", "roles": %s, "required": %s}',
+                current_user.id,
+                current_user.org_id,
+                sorted(r.value for r in held),
+                sorted(r.value for r in normalize_roles(allowed_roles)),
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions: role '{current_user.role}' is not in allowed roles {allowed_roles}",
+                detail="Insufficient permissions for this action",
             )
         return current_user
 

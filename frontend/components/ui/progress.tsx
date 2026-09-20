@@ -16,6 +16,7 @@ export function Progress({
   size = "md",
   tone = "primary",
   label,
+  ariaLabel,
   showValue = false,
   className,
 }: {
@@ -23,8 +24,10 @@ export function Progress({
   max?: number;
   size?: "xs" | "sm" | "md";
   tone?: "primary" | "success" | "warning" | "danger";
-  /** Accessible name. Required whenever the bar is not adjacent to its own label. */
+  /** Visible label shown above the bar; also its accessible name. */
   label?: string;
+  /** Accessible name only, for a bar that already sits beside its own visible text. */
+  ariaLabel?: string;
   showValue?: boolean;
   className?: string;
 }) {
@@ -54,7 +57,7 @@ export function Progress({
         aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={label}
+        aria-label={label ?? ariaLabel}
         className={cn("w-full overflow-hidden rounded-full bg-surface-sunken", height)}
       >
         <div

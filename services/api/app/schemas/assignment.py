@@ -5,7 +5,7 @@ Pydantic schemas for Assignments and Submissions.
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AssignmentCreate(BaseModel):
@@ -40,9 +40,16 @@ class AssignmentResponse(BaseModel):
 
 
 class AssignmentSubmissionCreate(BaseModel):
-    assignment_id: UUID
-    submission_text: Optional[str] = None
-    submission_url: Optional[str] = None
+    # The path parameter is authoritative; a body value, if sent, must match it.
+    assignment_id: Optional[UUID] = None
+    submission_text: Optional[str] = Field(None, max_length=50_000)
+    submission_url: Optional[str] = Field(None, max_length=1024)
+
+    @model_validator(mode="after")
+    def _require_content(self):
+        if not (self.submission_text and self.submission_text.strip()) and not self.submission_url:
+            raise ValueError("A submission needs text or a URL")
+        return self
 
 
 class AssignmentGradeRequest(BaseModel):

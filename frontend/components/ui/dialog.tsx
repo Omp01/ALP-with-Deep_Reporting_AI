@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 import { Button } from "./button";
 
 /**
@@ -101,9 +102,7 @@ export function Dialog({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const titleId = React.useId();
   const descriptionId = React.useId();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => setMounted(true), []);
+  const mounted = useIsMounted();
   useFocusTrap(panelRef, open, onClose);
 
   if (!mounted || !open) return null;
@@ -220,7 +219,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-fg-muted leading-relaxed">{description}</p>
+      <div className="text-sm text-fg-muted leading-relaxed">{description}</div>
     </Dialog>
   );
 }

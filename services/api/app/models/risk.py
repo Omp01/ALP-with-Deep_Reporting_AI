@@ -25,6 +25,8 @@ class LearnerRisk(Base):
     risk_score = Column(Float, default=0.0, nullable=False)  # 0.0 to 1.0
     risk_factors = Column(JSONB, default=list, nullable=False)  # Reasons: inactivity, declining scores, stalled progress
     recommended_actions = Column(JSONB, default=list, nullable=False)  # Recommended interventions
+    # Structured reasons: [{"code", "description", "value", "points", "evidence_ids"}]; risk_factors is their text.
+    risk_details = Column(JSONB, default=list, nullable=False, server_default="[]")
     is_resolved = Column(Boolean, default=False, nullable=False, index=True)
     detected_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

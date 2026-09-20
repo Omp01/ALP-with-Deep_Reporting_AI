@@ -37,7 +37,10 @@ export interface SessionUser {
   org_id: string;
   email: string;
   full_name: string;
+  /** Primary role, in the legacy spelling the route guards understand. */
   role: Role;
+  /** Canonical role codes (learner, manager, ld_admin, org_admin, super_admin), most privileged first. */
+  roles?: string[];
   avatar_url?: string | null;
   is_active: boolean;
   created_at?: string;

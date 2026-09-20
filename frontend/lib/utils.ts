@@ -88,9 +88,14 @@ export function formatDuration(seconds: number): string {
   return `${secs}s`;
 }
 
-/** Minutes to "8h 30m" — content durations are stored in minutes on modules. */
+/** Minutes to "42 min" / "1 h" / "8 h 30 min" — for course and module lengths. */
 export function formatMinutes(minutes: number): string {
-  return formatDuration(minutes * 60);
+  if (!Number.isFinite(minutes) || minutes < 0) return "—";
+  const total = Math.round(minutes);
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
 /** Playback position as "04:12" / "1:04:12". */

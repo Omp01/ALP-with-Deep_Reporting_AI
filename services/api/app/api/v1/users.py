@@ -1,5 +1,5 @@
 """
-User management endpoints (strictly tenant-isolated).
+User directory endpoints (strictly tenant-isolated).
 """
 
 from typing import List, Optional
@@ -10,69 +10,59 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.models import User, UserTeam
-from app.schemas.auth import UserProfileResponse, TenantInfo
-from app.api.deps import get_current_user, get_current_tenant, require_roles, TenantContext
+from app.core.rbac import Role, normalize_role
+from app.models import RoleDefinition, User, UserRole, UserTeam
+from app.schemas.auth import UserProfileResponse
+from app.api.deps import (
+    get_current_user,
+    get_current_tenant,
+    require_roles,
+    effective_roles,
+    TenantContext,
+)
+from app.services.user_profiles import build_user_profile
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+_PROFILE_LOAD_OPTIONS = (
+    selectinload(User.organization),
+    selectinload(User.team_memberships).selectinload(UserTeam.team),
+    selectinload(User.role_links).selectinload(UserRole.role),
+)
 
 
 @router.get("", response_model=List[UserProfileResponse])
 async def list_tenant_users(
-    role: Optional[str] = None,
+    role: Optional[str] = Query(None, description="Filter by role (canonical or legacy spelling)"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(require_roles(["org_admin", "instructor", "manager"])),
+    current_user: User = Depends(require_roles(["org_admin", "ld_admin", "manager"])),
     tenant_ctx: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    List users belonging to the caller's organization.
-    """
+    """List users belonging to the caller's organization."""
     query = (
         select(User)
         .where(User.org_id == tenant_ctx.org_id)
-        .options(
-            selectinload(User.organization),
-            selectinload(User.team_memberships).selectinload(UserTeam.team),
-        )
+        .options(*_PROFILE_LOAD_OPTIONS)
         .order_by(User.full_name)
         .limit(limit)
         .offset(offset)
     )
 
     if role:
-        query = query.where(User.role == role)
+        wanted = normalize_role(role)
+        if wanted is None:
+            raise HTTPException(status_code=400, detail=f"Unknown role '{role}'")
+        holders = (
+            select(UserRole.user_id)
+            .join(RoleDefinition, RoleDefinition.id == UserRole.role_id)
+            .where(RoleDefinition.code == wanted.value)
+        )
+        query = query.where(User.id.in_(holders))
 
     result = await db.execute(query)
-    users = result.scalars().all()
-
-    response = []
-    for u in users:
-        org_info = None
-        if u.organization:
-            org_info = TenantInfo(
-                id=u.organization.id,
-                name=u.organization.name,
-                slug=u.organization.slug,
-                is_active=u.organization.is_active,
-            )
-        teams = [tm.team.name for tm in u.team_memberships if tm.team]
-        response.append(
-            UserProfileResponse(
-                id=u.id,
-                org_id=u.org_id,
-                email=u.email,
-                full_name=u.full_name,
-                role=u.role,
-                avatar_url=u.avatar_url,
-                is_active=u.is_active,
-                created_at=u.created_at,
-                organization=org_info,
-                teams=teams,
-            )
-        )
-    return response
+    return [build_user_profile(u) for u in result.scalars().all()]
 
 
 @router.get("/{user_id}", response_model=UserProfileResponse)
@@ -83,49 +73,25 @@ async def get_user_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Retrieve user detail.
-    Strictly isolated: users cannot view profiles across organizations.
+    Retrieve a user profile.
+
+    A learner may only read their own profile; other roles may read profiles
+    within their own organization. Cross-tenant lookups return 404, the same as
+    a missing user, so ids cannot be probed across organizations.
     """
-    query = (
-        select(User)
-        .where(User.id == user_id)
-        .options(
-            selectinload(User.organization),
-            selectinload(User.team_memberships).selectinload(UserTeam.team),
+    is_self = user_id == current_user.id
+    if not is_self and effective_roles(current_user) == {Role.LEARNER}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Learners can only view their own profile",
         )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(*_PROFILE_LOAD_OPTIONS)
     )
-    result = await db.execute(query)
     target_user = result.scalar_one_or_none()
 
-    if not target_user:
+    if not target_user or target_user.org_id != tenant_ctx.org_id:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Multi-tenant isolation check
-    if current_user.role != "system_admin" and target_user.org_id != tenant_ctx.org_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found in current organization",
-        )
-
-    org_info = None
-    if target_user.organization:
-        org_info = TenantInfo(
-            id=target_user.organization.id,
-            name=target_user.organization.name,
-            slug=target_user.organization.slug,
-            is_active=target_user.organization.is_active,
-        )
-    teams = [tm.team.name for tm in target_user.team_memberships if tm.team]
-
-    return UserProfileResponse(
-        id=target_user.id,
-        org_id=target_user.org_id,
-        email=target_user.email,
-        full_name=target_user.full_name,
-        role=target_user.role,
-        avatar_url=target_user.avatar_url,
-        is_active=target_user.is_active,
-        created_at=target_user.created_at,
-        organization=org_info,
-        teams=teams,
-    )
+    return build_user_profile(target_user)

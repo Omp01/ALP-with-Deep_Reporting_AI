@@ -12,12 +12,20 @@ Handles:
 """
 import logging
 import sys
+import asyncio
 import time
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+# Automatically locate and add project root to sys.path for 'shared' imports when running locally
+root_dir = Path(__file__).resolve().parents[3]
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
+
 from fastapi import FastAPI, Request, Response
+from app.core.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -36,7 +44,27 @@ async def lifespan(app: FastAPI):
     logger.info(
         '{"event": "startup", "service": "api", "message": "API Service starting"}'
     )
+    try:  # jobs a restart left "processing" must not wait forever
+        from app.ingestion.pipeline import recover_stale_jobs
+        await recover_stale_jobs()
+    except Exception:
+        logger.exception("could not recover stale ingestion jobs")
+    dispatcher = None
+    if settings.event_dispatcher_enabled:
+        from app.events.dispatcher import run_dispatcher
+        dispatcher = asyncio.create_task(run_dispatcher(), name="event-dispatcher")
+    scheduler = None
+    if settings.report_scheduler_enabled:
+        from app.reporting.scheduler import run_scheduler
+        scheduler = asyncio.create_task(run_scheduler(), name="report-scheduler")
     yield
+    for task in (dispatcher, scheduler):
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     logger.info(
         '{"event": "shutdown", "service": "api", "message": "API Service shutting down"}'
     )
@@ -54,7 +82,7 @@ app = FastAPI(
 # CORS — allow frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://frontend:3000"],
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,8 +112,22 @@ async def request_logging_middleware(request: Request, call_next):
 
 
 # ---------------------------------------------------------------------------
-# Health Checks & Readiness
+# Root & Health Checks
 # ---------------------------------------------------------------------------
+@app.get("/", tags=["Root"])
+async def root():
+    """Service root descriptor with links to interactive documentation and health."""
+    return {
+        "service": "Adaptive LMS API Gateway",
+        "status": "online",
+        "docs_url": "/docs",
+        "redoc_url": "/redoc",
+        "health_url": "/health",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @app.get("/health", tags=["Health"])
 async def health():
     """Liveness probe — is the service running?"""
@@ -154,6 +196,8 @@ app.include_router(api_v1_router)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions and return a safe error response."""
+    import traceback
+    traceback.print_exc()
     request_id = getattr(request.state, "request_id", "unknown")
     logger.error(
         f'{{"event": "unhandled_error", "service": "api", '
@@ -164,7 +208,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "error": {
                 "code": "INTERNAL_ERROR",
-                "message": "An internal error occurred. Please try again.",
+                "message": f"An internal error occurred: {type(exc).__name__}: {exc}",
             }
         },
     )

@@ -4,7 +4,7 @@ Reporting models: AI Insights, Scheduled Reports, and Digests.
 
 from datetime import datetime
 import uuid
-from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Text, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -72,3 +72,33 @@ class ReportDigest(Base):
 
     # Relationships
     scheduled_report = relationship("ScheduledReport", back_populates="digests")
+
+
+class Report(Base):
+    """
+    A grounded report: the evidence package it was built from, and the claims that survived citation validation.
+
+    The package is stored with the report so every citation can be opened later, exactly as it was when the report was written.
+    """
+    __tablename__ = "reports"
+    __table_args__ = (Index("ix_reports_scope", "org_id", "audience", "scope_id", "created_at"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    audience = Column(String(20), nullable=False)          # learner | team | ld | organization
+    scope_type = Column(String(20), nullable=False)        # learner | team | organization
+    scope_id = Column(UUID(as_uuid=True), nullable=True)
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+    requested_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    generated_by = Column(String(20), nullable=False)      # ai | deterministic
+    ai_status = Column(String(20), nullable=False)         # ok | unavailable | invalid | skipped
+    ai_note = Column(Text, nullable=True)
+    model = Column(String(100), nullable=True)
+    prompt_version = Column(String(30), nullable=True)
+    package_hash = Column(String(64), nullable=False)
+    package = Column(JSONB, nullable=False)                # records, metrics, patterns (every evidence id resolves here)
+    summary = Column(Text, nullable=True)
+    claims = Column(JSONB, nullable=False, default=list)              # accepted and flagged claims
+    rejected_claims = Column(JSONB, nullable=False, default=list)     # what validation refused, and why
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

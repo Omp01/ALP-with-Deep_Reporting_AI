@@ -22,7 +22,10 @@ class User(Base):
     email = Column(String(255), nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="learner", index=True)  # learner, instructor, manager, org_admin, system_admin
+    # Compatibility column holding the user's PRIMARY role in legacy spelling
+    # (learner, manager, instructor, org_admin, system_admin). The authoritative
+    # role set lives in `user_roles`; see app/core/rbac.py.
+    role = Column(String(50), nullable=False, default="learner", index=True)
     avatar_url = Column(String(1024), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -31,6 +34,12 @@ class User(Base):
     # Relationships
     organization = relationship("Organization", back_populates="users")
     team_memberships = relationship("UserTeam", back_populates="user", cascade="all, delete-orphan")
+    role_links = relationship(
+        "UserRole",
+        foreign_keys="UserRole.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     enrollments = relationship("Enrollment", back_populates="user", cascade="all, delete-orphan")
     learner_competencies = relationship("LearnerCompetency", back_populates="user", cascade="all, delete-orphan")
     adaptive_sessions = relationship("AdaptiveSession", back_populates="user", cascade="all, delete-orphan")
