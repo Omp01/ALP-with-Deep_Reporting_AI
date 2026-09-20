@@ -36,6 +36,7 @@ class LearnerCompetency(Base):
     confidence_score = Column(Float, default=0.0, nullable=False)
     data_points_count = Column(Integer, default=0, nullable=False)
     status = Column(String(50), default="novice", nullable=False)
+    basis = Column(String(30), default="evidence", nullable=False)   # 'legacy_unverified': left by the earlier engine, not evidence
     last_assessed_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -110,6 +111,7 @@ class LearningEvent(Base):
     session_id = Column(UUID(as_uuid=True), nullable=True)
     course_id = Column(UUID(as_uuid=True), nullable=True)
     module_id = Column(UUID(as_uuid=True), nullable=True)
+    content_id = Column(UUID(as_uuid=True), nullable=True)
     event_type = Column(String(64), nullable=False)
     payload = Column(JSONB, default=dict)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -145,3 +147,18 @@ class UserTeam(Base):
     team_id = Column(UUID(as_uuid=True), primary_key=True)
     org_id = Column(UUID(as_uuid=True), nullable=False)
     joined_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AdaptiveDecision(Base):
+    __tablename__ = "adaptive_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False)
+    session_id = Column(UUID(as_uuid=True), nullable=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    competency_id = Column(UUID(as_uuid=True), nullable=True)
+    decision_type = Column(String(50), nullable=False)
+    reason = Column(Text, nullable=False)
+    rule_applied = Column(String(100), nullable=True)
+    decision_metadata = Column("metadata", JSONB, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

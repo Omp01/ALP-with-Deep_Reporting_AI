@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.models import LearnerRisk, User, Course
+from app.events import queries as event_queries
 from app.services.risk_service import evaluate_learner_risk, scan_organization_risks
 from app.api.deps import get_current_user, get_current_tenant, require_roles, TenantContext
 
@@ -30,10 +31,22 @@ class RiskRecordResponse(BaseModel):
     risk_level: str
     risk_score: float
     risk_factors: List[str]
+    # Structured reasons: [{code, description, points, value, evidence_ids}]. Each factor cites the figures that triggered it.
+    risk_details: List[dict] = []
     recommended_actions: List[str]
     is_resolved: bool
     detected_at: str
     updated_at: str
+
+
+def _out(r: LearnerRisk) -> RiskRecordResponse:
+    return RiskRecordResponse(
+        id=r.id, org_id=r.org_id, user_id=r.user_id, learner_name=r.user.full_name if r.user else "Unknown Learner",
+        learner_email=r.user.email if r.user else "unknown@domain.com", course_id=r.course_id,
+        course_title=r.course.title if r.course else "Unknown Course", risk_level=r.risk_level, risk_score=r.risk_score,
+        risk_factors=r.risk_factors, risk_details=r.risk_details or [], recommended_actions=r.recommended_actions,
+        is_resolved=r.is_resolved, detected_at=r.detected_at.isoformat(), updated_at=r.updated_at.isoformat(),
+    )
 
 
 @router.get("", response_model=List[RiskRecordResponse])
@@ -57,6 +70,9 @@ async def list_at_risk_learners(
         .options(selectinload(LearnerRisk.user), selectinload(LearnerRisk.course))
         .order_by(desc(LearnerRisk.risk_score), desc(LearnerRisk.updated_at))
     )
+    visible = await event_queries.visible_user_ids(db, current_user, tenant_ctx.org_id)   # managers: their team only
+    if visible is not None:
+        query = query.where(LearnerRisk.user_id.in_(list(visible)))
 
     if risk_level:
         query = query.where(LearnerRisk.risk_level == risk_level)
@@ -69,25 +85,7 @@ async def list_at_risk_learners(
     result = await db.execute(query)
     records = result.scalars().all()
 
-    return [
-        RiskRecordResponse(
-            id=r.id,
-            org_id=r.org_id,
-            user_id=r.user_id,
-            learner_name=r.user.full_name if r.user else "Unknown Learner",
-            learner_email=r.user.email if r.user else "unknown@domain.com",
-            course_id=r.course_id,
-            course_title=r.course.title if r.course else "Unknown Course",
-            risk_level=r.risk_level,
-            risk_score=r.risk_score,
-            risk_factors=r.risk_factors,
-            recommended_actions=r.recommended_actions,
-            is_resolved=r.is_resolved,
-            detected_at=r.detected_at.isoformat(),
-            updated_at=r.updated_at.isoformat(),
-        )
-        for r in records
-    ]
+    return [_out(r) for r in records]
 
 
 @router.get("/{learner_id}", response_model=List[RiskRecordResponse])
@@ -101,11 +99,9 @@ async def get_learner_risk_history(
     Detailed risk analysis for a specific learner.
     Learners can view their own profile; managers and admins can view subordinate learners.
     """
-    if current_user.role == "learner" and learner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Learners can only view their own risk profile",
-        )
+    visible = await event_queries.visible_user_ids(db, current_user, tenant_ctx.org_id)
+    if visible is not None and learner_id not in visible:
+        raise HTTPException(status_code=404, detail="Learner not found")
 
     query = (
         select(LearnerRisk)
@@ -121,25 +117,7 @@ async def get_learner_risk_history(
     result = await db.execute(query)
     records = result.scalars().all()
 
-    return [
-        RiskRecordResponse(
-            id=r.id,
-            org_id=r.org_id,
-            user_id=r.user_id,
-            learner_name=r.user.full_name if r.user else "Unknown Learner",
-            learner_email=r.user.email if r.user else "unknown@domain.com",
-            course_id=r.course_id,
-            course_title=r.course.title if r.course else "Unknown Course",
-            risk_level=r.risk_level,
-            risk_score=r.risk_score,
-            risk_factors=r.risk_factors,
-            recommended_actions=r.recommended_actions,
-            is_resolved=r.is_resolved,
-            detected_at=r.detected_at.isoformat(),
-            updated_at=r.updated_at.isoformat(),
-        )
-        for r in records
-    ]
+    return [_out(r) for r in records]
 
 
 @router.post("/scan")
@@ -178,7 +156,8 @@ async def resolve_at_risk_alert(
     res = await db.execute(query)
     risk_rec = res.scalars().first()
 
-    if not risk_rec:
+    visible = await event_queries.visible_user_ids(db, current_user, tenant_ctx.org_id)
+    if not risk_rec or (visible is not None and risk_rec.user_id not in visible):
         raise HTTPException(status_code=404, detail="Risk record not found")
 
     risk_rec.is_resolved = True

@@ -1,277 +1,175 @@
 """
-Demo Data Generator for Adaptive LMS (Stage 2: 5 Real Production Courses).
+Demo data for Adaptive LMS: synthetic learner history, run through the real competency engine.
 
-Generates rich, realistic learner telemetry and performance archetypes:
-1. High-mastery learner (Alice Adams): mastery >= 0.88 across Python and GenAI competencies
-2. High completion, low competency learner (Bob Bennett): 100% course progress, but shallow mastery (0.35-0.45) with conceptual errors
-3. Declining performance learner (Carol Clark): started strong (0.80), fell to 0.42 on advanced distributed streaming
-4. Low-mastery, disengaged learner (Dan Davis): low activity, low mastery (0.28), high risk alert
-5. Module with emerging skill gap: python.oop & de.stream_processing has organization-wide deficit
-6. Immutable learning telemetry events (session_started, video_progress, article_completed, answer_submitted, etc.)
+Earlier versions of this script wrote mastery numbers, risk scores and skill gaps straight into the tables. Nothing was
+behind them, which is exactly what the platform must never show. This version writes only what a learner would produce,
+evidence, and lets the engine derive everything else:
+
+    synthetic answers (source_type = 'seed_history')  ->  app.competency.service.apply  ->  mastery, confidence, trend
+    risk records                                      ->  app.services.risk_service (the same rules as production)
+
+Everything created here is SYNTHETIC. It is labelled as such in the evidence table (`source_type = 'seed_history'`) so a
+report can say so, and it has no `source_event_id` because no real event stands behind it. The outcomes (for example that
+Bob ends up weak in python.functions) come from the engine, not from a number chosen here: the answers are what is chosen.
+
+Archetypes
+    Alice  correct answers, a slow start: high mastery, improving
+    Bob    completed the course but keeps answering wrongly, often on retries: weak competencies
+    Carol  strong start, then a run of wrong answers on streaming: declining
+    Dan    a few wrong answers, then nothing for two weeks: low mastery and inactive
+
+Run after seed.py:   python scripts/generate_demo_data.py
 """
 
-import sys
+import asyncio
 import os
-import uuid
+import sys
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.join(BASE_DIR, "services", "api"))
 
-from app.core.database import SessionLocal
-from app.models import (
-    Organization,
-    User,
-    Course,
-    Module,
-    Competency,
-    Enrollment,
-    LearnerCompetency,
-    CompetencyHistory,
-    SkillGap,
-    LearnerRisk,
-    LearningEvent,
-    AdaptiveSession,
-    SessionSequenceStep,
-    AIInsight,
-)
+from sqlalchemy import select
+
+from app.competency import service as competency_service
+from app.core.database import AsyncSessionLocal
+from app.events import store as event_store
+from app.models import Competency, ContentItem, Course, CourseCompetency, Enrollment, LearnerCompetency, Organization, User
+from app.services import risk_service
+
+# (signal, difficulty, attempt_number, error_type). Days are counted back from now, oldest first, spread evenly.
+Answer = Tuple[float, float, int, Optional[str]]
+
+ARCHETYPES: Dict[str, Dict[str, object]] = {
+    "alice.learner@acme.com": {
+        "span_days": 9, "answers": {
+            "python.functions": [(0, .4, 1, "knowledge_gap"), (1, .5, 1, None), (1, .5, 1, None), (1, .6, 1, None), (1, .6, 1, None), (1, .7, 1, None), (1, .7, 1, None), (1, .7, 1, None)],
+            "python.oop": [(1, .5, 1, None), (1, .5, 1, None), (0, .6, 1, "careless_error"), (1, .6, 1, None), (1, .7, 1, None), (1, .7, 1, None)],
+            "genai.rag_architecture": [(1, .5, 1, None), (1, .6, 1, None), (1, .6, 1, None), (1, .7, 1, None), (1, .7, 1, None)],
+        },
+    },
+    "bob.learner@acme.com": {
+        "span_days": 14, "answers": {
+            "python.functions": [(0, .4, 1, "conceptual_misunderstanding"), (0, .5, 1, "conceptual_misunderstanding"), (1, .5, 1, None), (0, .5, 1, "conceptual_misunderstanding"),
+                                 (0, .6, 1, "procedural_error"), (1, .5, 2, None), (0, .6, 2, "conceptual_misunderstanding"), (0, .6, 2, "conceptual_misunderstanding"), (0, .6, 3, "conceptual_misunderstanding")],
+            "python.oop": [(0, .5, 1, "conceptual_misunderstanding"), (0, .6, 1, "conceptual_misunderstanding"), (0, .6, 1, "knowledge_gap"), (1, .5, 1, None),
+                           (0, .6, 2, "conceptual_misunderstanding"), (0, .6, 2, "conceptual_misunderstanding"), (0, .5, 3, "conceptual_misunderstanding")],
+        },
+    },
+    "carol.learner@acme.com": {
+        "span_days": 12, "answers": {
+            "de.stream_processing": [(1, .5, 1, None), (1, .6, 1, None), (1, .6, 1, None), (1, .7, 1, None), (0, .7, 1, "procedural_error"), (0, .7, 1, "procedural_error"),
+                                     (0, .7, 1, "procedural_error"), (0, .7, 1, "conceptual_misunderstanding"), (0, .7, 2, "procedural_error")],
+        },
+    },
+    "dan.learner@acme.com": {
+        "span_days": 4, "ends_days_ago": 14, "answers": {
+            "ml.evaluation_metrics": [(0, .5, 1, "knowledge_gap"), (0, .5, 1, "knowledge_gap"), (1, .5, 1, None), (0, .6, 1, "knowledge_gap")],
+        },
+    },
+}
 
 
-def generate_demo_telemetry():
-    session = SessionLocal()
-    try:
-        print("Generating Realistic Adaptive Learning Telemetry for 5 Courses...")
+def timeline(answers: List[Answer], span_days: float, ends_days_ago: float, now: datetime) -> List[datetime]:
+    """Evenly spaced moments, the last `ends_days_ago` days ago and the first `span_days` earlier than that."""
+    end = now - timedelta(days=ends_days_ago)
+    start = end - timedelta(days=span_days)
+    if len(answers) == 1:
+        return [end]
+    step = (end - start) / (len(answers) - 1)
+    return [start + step * i for i in range(len(answers))]
 
-        acme = session.query(Organization).filter_by(slug="acme-corp").first()
-        if not acme:
-            print("  [FAIL] Acme Corporation not found. Please run seed.py first.")
-            return
 
-        courses = {c.code: c for c in session.query(Course).filter_by(org_id=acme.id).all()}
-        competencies = {c.code: c for c in session.query(Competency).filter_by(org_id=acme.id).all()}
+async def generate_demo_telemetry() -> None:
+    print("Generating synthetic learner history through the competency engine...")
+    async with AsyncSessionLocal() as db:
+        try:
+            acme = (await db.execute(select(Organization).where(Organization.slug == "acme-corp"))).scalar_one_or_none()
+            if acme is None:
+                print("  [FAIL] Acme Corporation not found. Please run seed.py first.")
+                return
+            competencies = {c.code: c for c in (await db.execute(select(Competency).where(Competency.org_id == acme.id))).scalars()}
+            now = datetime.utcnow()
+            applied = skipped = 0
+            last_activity: Dict[tuple, datetime] = {}          # (learner, course) -> when they last answered
 
-        alice = session.query(User).filter_by(email="alice.learner@acme.com").first()
-        bob = session.query(User).filter_by(email="bob.learner@acme.com").first()
-        carol = session.query(User).filter_by(email="carol.learner@acme.com").first()
-        dan = session.query(User).filter_by(email="dan.learner@acme.com").first()
+            for email, plan in ARCHETYPES.items():
+                user = (await db.execute(select(User).where(User.email == email, User.org_id == acme.id))).scalar_one_or_none()
+                if user is None:
+                    print(f"  [SKIP] {email} not found")
+                    continue
+                for code, answers in plan["answers"].items():          # type: ignore[union-attr]
+                    competency = competencies.get(code)
+                    if competency is None:
+                        print(f"  [SKIP] competency {code} not found")
+                        continue
+                    state = (await db.execute(select(LearnerCompetency).where(
+                        LearnerCompetency.user_id == user.id, LearnerCompetency.competency_id == competency.id))).scalar_one_or_none()
+                    if state is not None and state.basis == "evidence" and state.data_points_count > 0:
+                        skipped += 1                                    # already has real or seeded evidence: leave it alone
+                        continue
+                    moments = timeline(answers, float(plan["span_days"]), float(plan.get("ends_days_ago", 1)), now)     # type: ignore[arg-type]
+                    for (signal, difficulty, attempt, error_type), when in zip(answers, moments):
+                        await competency_service.apply(db, competency_service.EvidenceInput(
+                            org_id=acme.id, user_id=user.id, competency_id=competency.id, source_type="seed_history", signal=float(signal),
+                            confidence=1.0, occurred_at=when, difficulty=difficulty, attempt_number=attempt, error_type=error_type,
+                        ), emit_event=False)
+                        applied += 1
+                    # the course this competency belongs to, and when the learner last worked in it
+                    course_id = (await db.execute(
+                        select(CourseCompetency.course_id).join(Enrollment, Enrollment.course_id == CourseCompetency.course_id)
+                        .where(CourseCompetency.competency_id == competency.id, Enrollment.user_id == user.id).limit(1))).scalar_one_or_none()
+                    if course_id is not None:
+                        key = (user.id, course_id)
+                        last_activity[key] = max(last_activity.get(key, moments[-1]), moments[-1])
 
-        now = datetime.utcnow()
-        py_course = courses.get("PY-FUND-101")
-        de_course = courses.get("DE-PIPELINES-301")
-        ml_course = courses.get("ML-CORE-401")
+            # Bob has completed the course's content; the point of his story is that this says nothing about mastery.
+            py = (await db.execute(select(Course).where(Course.code == "PY-FUND-101", Course.org_id == acme.id))).scalar_one_or_none()
+            bob = (await db.execute(select(User).where(User.email == "bob.learner@acme.com"))).scalar_one_or_none()
+            if py is not None and bob is not None:
+                enrolment = (await db.execute(select(Enrollment).where(Enrollment.user_id == bob.id, Enrollment.course_id == py.id))).scalar_one_or_none()
+                if enrolment is not None:
+                    enrolment.progress_pct = 100.0
 
-        # =====================================================================
-        # ARCHETYPE 1: High Mastery Learner (Alice Adams)
-        # =====================================================================
-        print("  -> Configuring Archetype 1: Alice Adams (High Mastery / Fast Learner)")
-        for comp_code, mastery in [("python.functions", 0.94), ("python.oop", 0.88), ("genai.rag_architecture", 0.91)]:
-            comp = competencies.get(comp_code)
-            if not comp:
-                continue
-            lc = session.query(LearnerCompetency).filter_by(user_id=alice.id, competency_id=comp.id).first()
-            if not lc:
-                lc = LearnerCompetency(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=alice.id,
-                    competency_id=comp.id,
-                    mastery_score=mastery,
-                    confidence_score=0.94,
-                    data_points_count=18,
-                    status="expert" if mastery >= 0.90 else "proficient",
-                    last_assessed_at=now - timedelta(days=1),
-                )
-                session.add(lc)
-                session.flush()
+            # A learner who answered questions also opened lessons: record when they last did, so the inactivity rule has a real
+            # event to measure from (it looks at events, not at evidence).
+            for (user_id, course_id), when in last_activity.items():
+                lesson = (await db.execute(select(ContentItem).where(ContentItem.course_id == course_id).order_by(ContentItem.order_index).limit(1))).scalar_one_or_none()
+                if lesson is not None:
+                    await event_store.record(db, org_id=acme.id, user_id=user_id, event_type="lesson_opened", course_id=course_id, module_id=lesson.module_id,
+                                             content_id=lesson.id, timestamp=when, payload={"source": "direct"}, attach_session=False)
 
-                for score in [0.55, 0.70, 0.82, mastery]:
-                    session.add(CompetencyHistory(
-                        id=uuid.uuid4(),
-                        learner_competency_id=lc.id,
-                        mastery_score=score,
-                        recorded_at=now - timedelta(days=4),
-                    ))
+            # Dan enrolled three weeks ago and has been silent for two.
+            dan = (await db.execute(select(User).where(User.email == "dan.learner@acme.com"))).scalar_one_or_none()
+            ml = (await db.execute(select(Course).where(Course.code == "ML-CORE-401", Course.org_id == acme.id))).scalar_one_or_none()
+            if ml is not None and dan is not None:
+                enrolment = (await db.execute(select(Enrollment).where(Enrollment.user_id == dan.id, Enrollment.course_id == ml.id))).scalar_one_or_none()
+                if enrolment is not None and (dan.id, ml.id) in last_activity:
+                    enrolment.enrolled_at, enrolment.last_activity_at = now - timedelta(days=21), last_activity[(dan.id, ml.id)]
 
-        # =====================================================================
-        # ARCHETYPE 2: High Completion, Low Competency Learner (Bob Bennett)
-        # =====================================================================
-        print("  -> Configuring Archetype 2: Bob Bennett (Shallow Completion / Low Mastery)")
-        if py_course:
-            bob_enr = session.query(Enrollment).filter_by(user_id=bob.id, course_id=py_course.id).first()
-            if bob_enr:
-                bob_enr.progress_pct = 100.0
-                bob_enr.status = "completed"
+            await db.commit()
+            print(f"  [OK] Applied {applied} synthetic answers ({skipped} competencies already had evidence).")
 
-        for comp_code, mastery in [("python.functions", 0.42), ("python.oop", 0.38)]:
-            comp = competencies.get(comp_code)
-            if not comp:
-                continue
-            lc = session.query(LearnerCompetency).filter_by(user_id=bob.id, competency_id=comp.id).first()
-            if not lc:
-                lc = LearnerCompetency(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=bob.id,
-                    competency_id=comp.id,
-                    mastery_score=mastery,
-                    confidence_score=0.88,
-                    data_points_count=22,
-                    status="developing",
-                    last_assessed_at=now - timedelta(hours=6),
-                )
-                session.add(lc)
-                session.flush()
+            # Risk records come from the same rules production uses, over the evidence just written.
+            result = await risk_service.scan_organization_risks(db, acme.id)
+            await db.commit()
+            print(f"  [OK] Risk scan evaluated {result['evaluated_enrollments']} enrolments ({result['high_or_critical_risks']} high or critical).")
 
-        # =====================================================================
-        # ARCHETYPE 3: Declining Performance Learner (Carol Clark)
-        # =====================================================================
-        print("  -> Configuring Archetype 3: Carol Clark (Declining Performance)")
-        comp_stream = competencies.get("de.stream_processing")
-        if comp_stream:
-            lc = session.query(LearnerCompetency).filter_by(user_id=carol.id, competency_id=comp_stream.id).first()
-            if not lc:
-                lc = LearnerCompetency(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=carol.id,
-                    competency_id=comp_stream.id,
-                    mastery_score=0.44,
-                    confidence_score=0.85,
-                    data_points_count=14,
-                    status="developing",
-                    last_assessed_at=now - timedelta(hours=3),
-                )
-                session.add(lc)
-                session.flush()
-
-                for score in [0.80, 0.72, 0.58, 0.44]:
-                    session.add(CompetencyHistory(
-                        id=uuid.uuid4(),
-                        learner_competency_id=lc.id,
-                        mastery_score=score,
-                        recorded_at=now - timedelta(days=2),
-                    ))
-
-        # =====================================================================
-        # ARCHETYPE 4: Low Activity / High Risk Learner (Dan Davis)
-        # =====================================================================
-        print("  -> Configuring Archetype 4: Dan Davis (Disengaged / High Risk)")
-        comp_metrics = competencies.get("ml.evaluation_metrics")
-        if comp_metrics:
-            lc = session.query(LearnerCompetency).filter_by(user_id=dan.id, competency_id=comp_metrics.id).first()
-            if not lc:
-                lc = LearnerCompetency(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=dan.id,
-                    competency_id=comp_metrics.id,
-                    mastery_score=0.28,
-                    confidence_score=0.70,
-                    data_points_count=6,
-                    status="novice",
-                    last_assessed_at=now - timedelta(days=12),
-                )
-                session.add(lc)
-                session.flush()
-
-        # At-Risk Records
-        if ml_course and py_course:
-            session.add_all([
-                LearnerRisk(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=dan.id,
-                    course_id=ml_course.id,
-                    risk_level="high",
-                    risk_score=0.88,
-                    risk_factors=["prolonged_inactivity", "low_mastery", "stagnation"],
-                    recommended_actions=["Schedule 1-on-1 diagnostic review with manager and assign remedial foundations lab."],
-                    is_resolved=False,
-                    detected_at=now - timedelta(days=3),
-                ),
-                LearnerRisk(
-                    id=uuid.uuid4(),
-                    org_id=acme.id,
-                    user_id=bob.id,
-                    course_id=py_course.id,
-                    risk_level="medium",
-                    risk_score=0.62,
-                    risk_factors=["shallow_completion", "conceptual_misconceptions"],
-                    recommended_actions=["Trigger adaptive remediation for Python Functions & Closures before advancing."],
-                    is_resolved=False,
-                    detected_at=now - timedelta(days=1),
-                ),
-            ])
-
-        # Emerging Cohort Skill Gaps
-        if comp_stream:
-            session.add(SkillGap(
-                id=uuid.uuid4(),
-                org_id=acme.id,
-                user_id=None,
-                team_id=None,
-                competency_id=comp_stream.id,
-                current_mastery=0.48,
-                target_mastery=0.80,
-                gap_size=0.32,
-                severity="high",
-                detected_at=now - timedelta(days=2),
-            ))
-
-        # Telemetry Events for Auditability
-        session.add_all([
-            LearningEvent(
-                id=uuid.uuid4(),
-                org_id=acme.id,
-                user_id=alice.id,
-                event_type="video_completed",
-                payload={"content_id": "video-1", "watch_duration_seconds": 480, "progress_percentage": 100},
-                timestamp=now - timedelta(days=1),
-                processed=True,
-            ),
-            LearningEvent(
-                id=uuid.uuid4(),
-                org_id=acme.id,
-                user_id=bob.id,
-                event_type="answer_submitted",
-                payload={
-                    "question_id": "q-oop-1",
-                    "correct": False,
-                    "error_type": "CONCEPTUAL",
-                    "response_time_ms": 4200,
-                    "attempt_number": 2,
-                },
-                timestamp=now - timedelta(hours=5),
-                processed=True,
-            ),
-            LearningEvent(
-                id=uuid.uuid4(),
-                org_id=acme.id,
-                user_id=carol.id,
-                event_type="answer_submitted",
-                payload={
-                    "question_id": "q-stream-1",
-                    "correct": False,
-                    "error_type": "PROCEDURAL",
-                    "response_time_ms": 6800,
-                    "attempt_number": 1,
-                },
-                timestamp=now - timedelta(hours=2),
-                processed=True,
-            ),
-        ])
-
-        session.commit()
-        print("  [OK] Realistic Multi-Course Telemetry, Archetypes, and Risk Signals Generated Successfully!")
-
-    except Exception as e:
-        session.rollback()
-        print(f"  [FAIL] Failed generating demo telemetry: {e}")
-        raise
-    finally:
-        session.close()
+            for email in ARCHETYPES:
+                user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+                if user is None:
+                    continue
+                rows = (await db.execute(select(LearnerCompetency, Competency).join(Competency, Competency.id == LearnerCompetency.competency_id)
+                                         .where(LearnerCompetency.user_id == user.id, LearnerCompetency.basis == "evidence"))).all()
+                summary = ", ".join(f"{c.code} {s.mastery_score:.2f} ({s.trend})" for s, c in rows)
+                print(f"     {email}: {summary or 'no evidence'}")
+        except Exception as exc:
+            await db.rollback()
+            print(f"  [FAIL] Failed generating demo data: {exc}")
+            raise
 
 
 if __name__ == "__main__":
-    generate_demo_telemetry()
+    asyncio.run(generate_demo_telemetry())

@@ -1,13 +1,16 @@
 """
 Adaptive Engine configuration and hyperparameter settings.
 """
+from pathlib import Path
 from pydantic_settings import BaseSettings
+
+_root_env = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
     """Adaptive Engine service settings."""
-    database_url: str = "postgresql+asyncpg://adaptive_lms:adaptive_lms_dev_password@postgres:5432/adaptive_lms"
-    redis_url: str = "redis://redis:6379/0"
+    database_url: str = "postgresql+asyncpg://adaptive_lms:adaptive_lms_dev_password@127.0.0.1:5433/adaptive_lms"
+    redis_url: str = "redis://127.0.0.1:6379/0"
     log_level: str = "INFO"
     event_stream_name: str = "learning_events"
 
@@ -26,7 +29,7 @@ class Settings(BaseSettings):
     skip_mastery_threshold: float = 0.75
     skip_consecutive_correct: int = 3
 
-    model_config = {"env_file": ".env", "case_sensitive": False}
+    model_config = {"env_file": (str(_root_env), ".env"), "case_sensitive": False, "extra": "ignore"}
 
 
 settings = Settings()

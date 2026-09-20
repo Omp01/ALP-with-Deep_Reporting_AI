@@ -5,8 +5,14 @@ import logging
 import sys
 import time
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+# Automatically locate and add project root to sys.path for 'shared' imports when running locally
+root_dir = Path(__file__).resolve().parents[3]
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 
@@ -22,6 +28,7 @@ from app.models.tables import (
     CompetencyHistory,
     AdaptiveSession,
     SessionSequenceStep,
+    AdaptiveDecision,
     Competency,
     LearningEvent,
     Module,
@@ -82,6 +89,18 @@ async def request_logging(request: Request, call_next):
     return response
 
 
+@app.get("/", tags=["Root"])
+async def root():
+    return {
+        "service": "Adaptive Engine Service",
+        "status": "online",
+        "docs_url": "/docs",
+        "health_url": "/health",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @app.get("/health", tags=["Health"])
 async def health():
     return {
@@ -119,110 +138,18 @@ class EventIngestPayload(BaseModel):
 
 
 @app.post("/api/v1/adaptive/events", status_code=status.HTTP_200_OK)
-async def process_learning_event(
-    event: EventIngestPayload,
-    db: AsyncSession = Depends(get_db),
-):
+async def process_learning_event(event: EventIngestPayload):
     """
-    Processes learning event, updates learner competency model, and records history.
+    Retired as a mastery writer (Phase 5).
+
+    This handler used to update `learner_competencies` itself: every quiz answer counted as correct because it read a
+    `correct` key the events do not carry (default True), evidence without a competency was filed under the
+    organisation's first competency, and missing inputs were invented (audit C1-C3). Competency mastery is now written
+    only by the API's deterministic engine (services/api/app/competency), from graded evidence, with an audit trail.
+
+    The endpoint stays so the event worker keeps working; it records nothing.
     """
-    raw_payload = event.payload or {}
-    competency_id_str = raw_payload.get("competency_id")
-    
-    comp_id = None
-    if competency_id_str:
-        try:
-            comp_id = UUID(str(competency_id_str))
-        except ValueError:
-            pass
-
-    if not comp_id:
-        first_comp = await db.execute(select(Competency).where(Competency.org_id == event.org_id).limit(1))
-        comp_obj = first_comp.scalars().first()
-        if comp_obj:
-            comp_id = comp_obj.id
-
-    if not comp_id:
-        return {"status": "ignored", "reason": "No valid competency associated with event"}
-
-    # Fetch existing learner competency state
-    query = select(LearnerCompetency).where(
-        and_(
-            LearnerCompetency.org_id == event.org_id,
-            LearnerCompetency.user_id == event.user_id,
-            LearnerCompetency.competency_id == comp_id,
-        )
-    )
-    res = await db.execute(query)
-    lc = res.scalars().first()
-
-    now = event.timestamp or datetime.utcnow()
-    attempt = {
-        "correct": raw_payload.get("correct", True),
-        "difficulty": raw_payload.get("difficulty", "intermediate"),
-        "duration_ms": raw_payload.get("duration_ms", 3000),
-        "attempt_number": raw_payload.get("attempt_number", 1),
-        "error_type": raw_payload.get("error_type"),
-        "timestamp": now,
-    }
-
-    if not lc:
-        calc = calculate_mastery([attempt], current_time=now)
-        new_mastery = calc["mastery"]
-        status_label = "proficient" if new_mastery >= 0.8 else ("competent" if new_mastery >= 0.6 else "novice")
-        lc = LearnerCompetency(
-            id=uuid.uuid4(),
-            org_id=event.org_id,
-            user_id=event.user_id,
-            competency_id=comp_id,
-            mastery_score=new_mastery,
-            confidence_score=calculate_confidence(1),
-            data_points_count=1,
-            status=status_label,
-            last_assessed_at=now,
-            updated_at=now,
-        )
-        db.add(lc)
-        await db.flush()
-        delta = new_mastery
-    else:
-        old_mastery = lc.mastery_score
-        new_count = lc.data_points_count + 1
-        
-        # Exponential moving average update
-        is_correct = raw_payload.get("correct", True)
-        target_val = 1.0 if is_correct else 0.0
-        alpha = 0.25
-        updated_mastery = round(float((1 - alpha) * old_mastery + alpha * target_val), 4)
-        status_label = "expert" if updated_mastery >= 0.9 else ("proficient" if updated_mastery >= 0.75 else ("competent" if updated_mastery >= 0.6 else "developing"))
-
-        lc.mastery_score = updated_mastery
-        lc.data_points_count = new_count
-        lc.confidence_score = calculate_confidence(new_count)
-        lc.status = status_label
-        lc.last_assessed_at = now
-        lc.updated_at = now
-
-        delta = updated_mastery - old_mastery
-
-    # Record historical progression
-    history_rec = CompetencyHistory(
-        id=uuid.uuid4(),
-        learner_competency_id=lc.id,
-        mastery_score=lc.mastery_score,
-        event_id=event.event_id,
-        recorded_at=now,
-    )
-    db.add(history_rec)
-    await db.commit()
-
-    return {
-        "status": "updated",
-        "competency_id": str(comp_id),
-        "new_mastery": lc.mastery_score,
-        "confidence": lc.confidence_score,
-        "delta": round(delta, 4),
-    }
+    return {"status": "ignored", "reason": "Mastery is computed by the API competency engine from graded evidence."}
 
 
 # =============================================================================
@@ -250,6 +177,7 @@ async def get_next_recommendation(
                 LearnerCompetency.org_id == org_id,
                 LearnerCompetency.user_id == req.learner_id,
                 LearnerCompetency.competency_id == req.current_competency_id,
+                LearnerCompetency.basis == "evidence", LearnerCompetency.data_points_count > 0,
             )
         )
         res = await db.execute(q)
@@ -263,6 +191,7 @@ async def get_next_recommendation(
             and_(
                 LearnerCompetency.org_id == org_id,
                 LearnerCompetency.user_id == req.learner_id,
+                LearnerCompetency.basis == "evidence", LearnerCompetency.data_points_count > 0,
             )
         ).order_by(LearnerCompetency.mastery_score.asc()).limit(1)
         res = await db.execute(q)
@@ -336,6 +265,26 @@ async def get_next_recommendation(
         updated_at=datetime.utcnow(),
     )
     db.add(step_record)
+
+    # Persist audit record in adaptive_decisions
+    decision_record = AdaptiveDecision(
+        id=uuid.uuid4(),
+        org_id=org_id,
+        session_id=adap_session.id,
+        user_id=req.learner_id,
+        competency_id=comp_state.competency_id if comp_state else None,
+        decision_type=decision,
+        reason=reason,
+        rule_applied=f"policy_{decision}",
+        decision_metadata={
+            "mastery": mastery,
+            "confidence": confidence,
+            "recommended_difficulty": recommended_diff,
+            "recommended_content_id": str(item_id_to_record),
+        },
+        created_at=datetime.utcnow(),
+    )
+    db.add(decision_record)
     await db.commit()
 
     return AdaptiveNextResponse(
