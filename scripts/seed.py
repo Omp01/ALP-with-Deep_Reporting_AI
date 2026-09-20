@@ -2,7 +2,7 @@
 Database Seeding Script for Adaptive LMS (Stage 2: 5 Real Production Courses).
 
 Populates the database with:
-- 2 Organizations (Acme Corporation, TechNova Systems)
+- 2 Organizations (Harbinger Group, TechNova Systems)
 - Multiple Users per organization across all 5 roles (system_admin, org_admin, instructor, manager, learner)
 - Teams with manager assignments and learner memberships
 - 15 Granular Competencies aligned with Bloom's Taxonomy
@@ -113,7 +113,7 @@ def seed_database():
         if not acme_org:
             acme_org = Organization(
                 id=uuid.uuid4(),
-                name="Acme Corporation",
+                name="Harbinger Group",
                 slug="acme-corp",
                 is_active=True,
                 settings={"theme": "light", "allowed_domains": ["acme.com"], "max_users": 500},

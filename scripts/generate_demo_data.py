@@ -88,7 +88,7 @@ async def generate_demo_telemetry() -> None:
         try:
             acme = (await db.execute(select(Organization).where(Organization.slug == "acme-corp"))).scalar_one_or_none()
             if acme is None:
-                print("  [FAIL] Acme Corporation not found. Please run seed.py first.")
+                print("  [FAIL] The primary organization (slug acme-corp) not found. Please run seed.py first.")
                 return
             competencies = {c.code: c for c in (await db.execute(select(Competency).where(Competency.org_id == acme.id))).scalars()}
             now = datetime.utcnow()
