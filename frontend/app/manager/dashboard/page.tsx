@@ -30,15 +30,17 @@ interface TeamItem {
   member_count: number;
 }
 
+/** One row of /adaptive/cohort-gaps: counts from stored evidence, never a single average. */
 interface CohortGap {
   competency_id: string;
-  competency_code: string;
-  competency_name: string;
-  avg_mastery: number;
-  gap_severity: string;
-  affected_learners_count: number;
-  total_learners_evaluated: number;
-  recommendation: string;
+  code: string | null;
+  name: string;
+  target_mastery: number;
+  assessed_learners: number;
+  learners_below_target: number;
+  learners_declining: number;
+  lowest_mastery: number;
+  median_mastery: number;
 }
 
 interface RiskAlert {
@@ -128,7 +130,7 @@ export default function ManagerDashboard() {
       if (mRes.ok) setTeamMembers(await mRes.json());
 
       // 4. Organization/Team Risk Alerts
-      const rRes = await fetch(`http://localhost:8000/api/v1/risks?resolved=${riskFilter === "active" ? "false" : "null"}`, { headers });
+      const rRes = await fetch(`http://localhost:8000/api/v1/risks${riskFilter === "active" ? "?resolved=false" : ""}`, { headers });
       if (rRes.ok) setRiskAlerts(await rRes.json());
     } catch (err) {
       console.error("Error loading team data:", err);
@@ -481,52 +483,42 @@ export default function ManagerDashboard() {
                     <table className="w-full text-left text-sm">
                       <thead className="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
                         <tr>
-                          <th className="px-4 py-3">Competency Code & Name</th>
-                          <th className="px-4 py-3">Cohort Avg Mastery</th>
-                          <th className="px-4 py-3">Severity</th>
-                          <th className="px-4 py-3">Affected Learners</th>
-                          <th className="px-4 py-3">Recommended Intervention</th>
+                          <th className="px-4 py-3">Competency</th>
+                          <th className="px-4 py-3">Median Mastery</th>
+                          <th className="px-4 py-3">Below Target</th>
+                          <th className="px-4 py-3">Declining</th>
+                          <th className="px-4 py-3">Lowest</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {cohortGaps.map((gap) => (
                           <tr key={gap.competency_id} className="hover:bg-slate-50/60">
                             <td className="px-4 py-3 font-medium text-slate-900">
-                              <span className="font-mono text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded mr-2">
-                                {gap.competency_code}
-                              </span>
-                              {gap.competency_name}
+                              {gap.code && (
+                                <span className="font-mono text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded mr-2">
+                                  {gap.code}
+                                </span>
+                              )}
+                              {gap.name}
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                 <div className="w-20 bg-slate-200 rounded-full h-2">
                                   <div
                                     className="bg-amber-500 h-2 rounded-full"
-                                    style={{ width: `${Math.min(100, gap.avg_mastery * 100)}%` }}
+                                    style={{ width: `${Math.min(100, gap.median_mastery * 100)}%` }}
                                   />
                                 </div>
                                 <span className="text-xs font-mono font-semibold text-slate-700">
-                                  {(gap.avg_mastery * 100).toFixed(0)}%
+                                  {(gap.median_mastery * 100).toFixed(0)}%
                                 </span>
                               </div>
                             </td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${
-                                  gap.gap_severity === "critical"
-                                    ? "bg-red-100 text-red-800"
-                                    : "bg-amber-100 text-amber-800"
-                                }`}
-                              >
-                                {gap.gap_severity}
-                              </span>
-                            </td>
                             <td className="px-4 py-3 text-xs text-slate-600">
-                              <span className="font-semibold text-slate-900">{gap.affected_learners_count}</span> of {gap.total_learners_evaluated}
+                              <span className="font-semibold text-slate-900">{gap.learners_below_target}</span> of {gap.assessed_learners} below {Math.round(gap.target_mastery * 100)}%
                             </td>
-                            <td className="px-4 py-3 text-xs text-slate-600 max-w-xs">
-                              {gap.recommendation}
-                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-600">{gap.learners_declining}</td>
+                            <td className="px-4 py-3 text-xs font-mono text-slate-600">{(gap.lowest_mastery * 100).toFixed(0)}%</td>
                           </tr>
                         ))}
                       </tbody>

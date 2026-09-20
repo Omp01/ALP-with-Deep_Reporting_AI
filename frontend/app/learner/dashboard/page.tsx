@@ -1,251 +1,328 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Link from "next/link";
-import { Navbar } from "@/components/Navbar";
-import { Sidebar } from "@/components/Sidebar";
 import {
-  Compass,
-  Award,
-  TrendingUp,
-  Clock,
-  Sparkles,
   ArrowRight,
-  CheckCircle2,
-  AlertCircle,
-  HelpCircle,
   BookOpen,
+  Clock,
+  Compass,
+  GraduationCap,
+  Lightbulb,
+  PlayCircle,
+  Sparkles,
 } from "lucide-react";
 
-export default function LearnerDashboard() {
-  const [user, setUser] = useState<any>(null);
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [competencies, setCompetencies] = useState<any[]>([]);
-  const [adaptiveRec, setAdaptiveRec] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+import { AppShell, PageHeader } from "@/components/shell";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  ErrorState,
+  MasteryBar,
+  Progress,
+  Skeleton,
+  SkeletonCard,
+} from "@/components/ui";
+import { itemKindLabel } from "@/components/player/course-outline";
+import { useApi } from "@/hooks/use-api";
+import { useAuth } from "@/hooks/use-auth";
+import { formatDuration, formatRelativeTime } from "@/lib/utils";
+import { learningService } from "@/services";
+import type { LearnerHome, Recommendation } from "@/types/learning";
 
-  useEffect(() => {
-    async function loadData() {
-      if (typeof window === "undefined") return;
-      const stored = localStorage.getItem("user");
-      const token = localStorage.getItem("access_token");
-      if (!stored || !token) {
-        window.location.href = "/login";
-        return;
-      }
+function greeting(hour: number): string {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
-      const u = JSON.parse(stored);
-      setUser(u);
-      const headers = { Authorization: `Bearer ${token}` };
+function playerHref(courseId: string, itemId?: string | null): string {
+  const query = new URLSearchParams({ course_id: courseId });
+  if (itemId) query.set("item_id", itemId);
+  return `/learner/learning?${query.toString()}`;
+}
 
-      try {
-        // 1. Fetch Learner Analytics
-        const aRes = await fetch(`http://localhost:8000/api/v1/analytics/learner/${u.id}`, { headers });
-        if (aRes.ok) setAnalytics(await aRes.json());
+function recommendationHref(rec: Recommendation): string {
+  return rec.kind === "content" ? playerHref(rec.course_id, rec.content_id) : `/courses/${rec.course_id}`;
+}
 
-        // 2. Fetch Competencies
-        const cRes = await fetch(`http://localhost:8000/api/v1/adaptive/competencies/${u.id}`, { headers });
-        if (cRes.ok) setCompetencies(await cRes.json());
-
-        // 3. Fetch Adaptive Next Step
-        // First get a course ID
-        const coursesRes = await fetch("http://localhost:8000/api/v1/courses", { headers });
-        if (coursesRes.ok) {
-          const courses = await coursesRes.json();
-          if (courses.length > 0) {
-            const nextRes = await fetch("http://localhost:8000/api/v1/adaptive/next", {
-              method: "POST",
-              headers: { ...headers, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                session_id: "00000000-0000-0000-0000-000000000001",
-                course_id: courses[0].id,
-              }),
-            });
-            if (nextRes.ok) setAdaptiveRec(await nextRes.json());
-          }
-        }
-      } catch (err) {
-        console.error("Failed to load dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
-
-  const getDecisionBadge = (decision: string) => {
-    switch (decision) {
-      case "advance":
-        return "bg-emerald-100 text-emerald-800 border-emerald-300";
-      case "skip":
-        return "bg-purple-100 text-purple-800 border-purple-300";
-      case "remediate":
-        return "bg-amber-100 text-amber-800 border-amber-300";
-      case "change_modality":
-        return "bg-blue-100 text-blue-800 border-blue-300";
-      default:
-        return "bg-slate-100 text-slate-800 border-slate-300";
-    }
-  };
-
+function HomeSkeleton() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <Navbar />
-      <div className="flex">
-        <Sidebar />
-        <main className="flex-1 p-8 max-w-6xl">
-          {/* Greeting Header */}
-          <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                Welcome back, {user?.full_name?.split(" ")[0] || "Learner"}!
-              </h1>
-              <p className="text-sm text-slate-500 mt-1">
-                Your learning path is dynamically personalized in real time based on demonstrated mastery.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Link
-                href="/learner/learning"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors shadow-sm"
-              >
-                <Compass className="w-4 h-4" /> Start Adaptive Session
-              </Link>
-              <Link
-                href="/learner/insights"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm"
-              >
-                <Sparkles className="w-4 h-4 text-indigo-600" /> AI Insights
-              </Link>
-            </div>
-          </div>
-
-          {/* Real-time Adaptive Next Recommendation Banner */}
-          {adaptiveRec && (
-            <div className="mb-8 p-5 bg-gradient-to-r from-indigo-50/80 via-white to-indigo-50/30 border border-indigo-200 rounded-2xl shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-2.5 w-2.5 rounded-full bg-indigo-600 animate-pulse" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-indigo-700">
-                      Real-Time Pedagogical Sequencing
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase border ${getDecisionBadge(adaptiveRec.decision)}`}>
-                      Decision: {adaptiveRec.decision}
-                    </span>
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Recommended: {adaptiveRec.recommended_content_title || adaptiveRec.competency_name || "Foundations Review"}
-                  </h3>
-                  <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
-                    {adaptiveRec.reason}
-                  </p>
-                </div>
-                <Link
-                  href="/learner/learning"
-                  className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                  Jump to Lesson <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              </div>
-            </div>
-          )}
-
-          {/* Metric KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between text-slate-500 mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider">Average Mastery</span>
-                <Award className="w-5 h-5 text-indigo-600" />
-              </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {analytics?.average_mastery !== undefined ? `${Math.round(analytics.average_mastery * 100)}%` : "--"}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Multi-factor Bayesian mastery</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between text-slate-500 mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider">Accuracy Rate</span>
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-              </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {analytics?.accuracy_rate !== undefined ? `${Math.round(analytics.accuracy_rate * 100)}%` : "--"}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Across diagnostic questions</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between text-slate-500 mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider">Avg Latency</span>
-                <Clock className="w-5 h-5 text-blue-600" />
-              </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {analytics?.avg_response_time_ms ? `${(analytics.avg_response_time_ms / 1000).toFixed(1)}s` : "--"}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Question response time</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between text-slate-500 mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider">Course Progress</span>
-                <TrendingUp className="w-5 h-5 text-purple-600" />
-              </div>
-              <div className="text-2xl font-bold text-slate-900">
-                {analytics?.average_course_progress_pct !== undefined ? `${analytics.average_course_progress_pct}%` : "--"}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Active curriculum completion</p>
-            </div>
-          </div>
-
-          {/* Competency Mastery Overview */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Live Competency Mastery Graph</h3>
-                <p className="text-xs text-slate-500">Real-time state estimates calibrated against your learning events</p>
-              </div>
-              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-                {competencies.length} Competencies Evaluated
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              {competencies.length === 0 ? (
-                <div className="py-8 text-center text-sm text-slate-400">
-                  No competency evidence recorded yet. Complete an assessment to initialize your model.
-                </div>
-              ) : (
-                competencies.map((comp) => {
-                  const pct = Math.round(comp.mastery * 100);
-                  const isHigh = pct >= 80;
-                  const isLow = pct < 50;
-                  const barColor = isHigh ? "bg-emerald-600" : isLow ? "bg-rose-500" : "bg-indigo-600";
-                  return (
-                    <div key={comp.competency_id} className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">{comp.name}</div>
-                          <div className="text-xs text-slate-400 capitalize">Taxonomy: {comp.domain || "understand"}</div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700 capitalize">
-                            Status: {comp.status}
-                          </span>
-                          <span className="text-sm font-bold text-slate-900">{pct}%</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </main>
+    <div className="space-y-6" aria-busy="true" aria-label="Loading your learning home">
+      <Skeleton className="h-40 w-full rounded-xl" />
+      <div className="grid gap-6 lg:grid-cols-3">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
       </div>
     </div>
+  );
+}
+
+function ContinueCard({ home }: { home: LearnerHome }) {
+  const next = home.continue_learning;
+
+  if (!next) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <EmptyState
+            icon={GraduationCap}
+            size="sm"
+            title={home.stats.enrolled_courses > 0 ? "You have finished everything you enrolled in" : "Start your first course"}
+            description="Browse the catalog to find something to learn next."
+            action={
+              <Link href="/explore">
+                <Button>
+                  <Compass aria-hidden="true" /> Explore courses
+                </Button>
+              </Link>
+            }
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const percent = Math.round(next.progress_percent);
+  return (
+    <Card className="border-primary-border">
+      <CardContent className="flex flex-col gap-5 pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">Continue learning</p>
+          <h2 className="text-xl font-semibold tracking-tight text-fg">{next.course_title}</h2>
+          {next.item_title && (
+            <p className="flex items-center gap-1.5 text-sm text-fg-muted">
+              <PlayCircle className="size-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {next.module_title ? `${next.module_title.replace(/^Module\s+\d+:\s*/i, "")} · ` : ""}
+                {next.item_title}
+              </span>
+            </p>
+          )}
+          <div className="flex max-w-sm items-center gap-3 pt-1">
+            <Progress value={percent} ariaLabel={`${next.course_title} progress`} className="flex-1" />
+            <span className="text-xs font-medium tabular-nums text-fg">{percent}%</span>
+          </div>
+        </div>
+        <Link href={playerHref(next.course_id, next.item_id)} className="shrink-0">
+          <Button size="lg">
+            Continue <ArrowRight aria-hidden="true" />
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function LearnerHomePage() {
+  const { user } = useAuth();
+  const { data: home, loading, error, refetch } = useApi<LearnerHome>((signal) => learningService.home(signal));
+
+  const firstName = user?.full_name.split(" ")[0];
+  const title = firstName ? `${greeting(new Date().getHours())}, ${firstName}` : greeting(new Date().getHours());
+
+  return (
+    <AppShell roles={["learner", "manager", "instructor", "org_admin", "system_admin"]}>
+      <PageHeader
+        title={title}
+        description="Pick up where you left off. What you see next is based on what you have actually done."
+      />
+
+      {loading && <HomeSkeleton />}
+      {!loading && error && <ErrorState error={error} onRetry={refetch} />}
+
+      {!loading && !error && home && (
+        <div className="space-y-6">
+          <ContinueCard home={home} />
+
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              ["Courses enrolled", String(home.stats.enrolled_courses)],
+              ["Courses completed", String(home.stats.completed_courses)],
+              ["Lessons completed", String(home.stats.completed_items)],
+              ["Time learning", home.stats.time_spent_seconds > 0 ? formatDuration(home.stats.time_spent_seconds) : "—"],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-border bg-surface-elevated px-4 py-3">
+                <dt className="text-xs text-fg-muted">{label}</dt>
+                <dd className="mt-0.5 text-xl font-semibold tabular-nums text-fg">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Recommended */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Lightbulb className="size-4 text-primary" aria-hidden="true" /> Recommended for you
+                </CardTitle>
+                <CardDescription>Each suggestion says why you are seeing it.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {home.recommendations.length === 0 ? (
+                  <EmptyState size="sm" title="Nothing to suggest yet" description="Suggestions appear once there is published content you have not started." />
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {home.recommendations.map((rec) => (
+                      <li key={`${rec.kind}-${rec.content_id ?? rec.course_id}`}>
+                        <Link
+                          href={recommendationHref(rec)}
+                          className="flex items-start gap-3 py-3 hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary sm:-mx-2 sm:rounded-lg sm:px-2"
+                        >
+                          <span className="mt-0.5 rounded-lg bg-primary-light p-2 text-primary">
+                            {rec.kind === "content" ? <BookOpen className="size-4" aria-hidden="true" /> : <GraduationCap className="size-4" aria-hidden="true" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-fg">
+                              {rec.content_title ?? rec.course_title}
+                            </span>
+                            <span className="block truncate text-xs text-fg-muted">
+                              {rec.content_title
+                                ? `${itemKindLabel({ content_type: rec.content_type ?? "", kind: "lesson" })} · ${rec.course_title}`
+                                : "Course"}
+                            </span>
+                            <span className="mt-1 block text-xs text-fg">{rec.reason}</span>
+                          </span>
+                          <ArrowRight className="mt-1 size-4 shrink-0 text-fg-subtle" aria-hidden="true" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Competencies */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Your competencies</CardTitle>
+                <CardDescription>Estimated from your assessment answers.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {home.competencies.length === 0 ? (
+                  <EmptyState
+                    size="sm"
+                    title="No evidence yet"
+                    description="Your competencies appear after you answer your first assessment questions."
+                  />
+                ) : (
+                  <ul className="space-y-4">
+                    {home.competencies.map((competency) => (
+                      <li key={competency.id}>
+                        <MasteryBar mastery={competency.mastery} label={competency.name} />
+                        <p className="mt-1 text-xs text-fg-muted">
+                          Based on {competency.evidence_count} {competency.evidence_count === 1 ? "answer" : "answers"}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Recent activity */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Clock className="size-4 text-fg-muted" aria-hidden="true" /> Recent activity
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {home.recent_activity.length === 0 ? (
+                  <EmptyState size="sm" title="No activity yet" description="Lessons you start or finish will show here." />
+                ) : (
+                  <ol className="space-y-3">
+                    {home.recent_activity.map((activity, index) => (
+                      <li key={`${activity.timestamp}-${index}`} className="text-sm">
+                        <p className="text-fg">{activity.label}</p>
+                        <p className="text-xs text-fg-muted">
+                          {activity.course_title ? `${activity.course_title} · ` : ""}
+                          {formatRelativeTime(activity.timestamp)}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* AI insight */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Sparkles className="size-4 text-primary" aria-hidden="true" /> AI learning insight
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {home.insight ? (
+                  <div className="space-y-3">
+                    <p className="text-sm leading-relaxed text-fg">{home.insight.narrative}</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Link href="/learner/insights">
+                        <Button variant="secondary" size="sm">
+                          See evidence
+                        </Button>
+                      </Link>
+                      <span className="text-xs text-fg-muted">Generated {formatRelativeTime(home.insight.created_at)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState
+                    size="sm"
+                    title="No insight generated yet"
+                    description="Insights are written from your real activity, with the evidence behind each statement."
+                    action={
+                      <Link href="/learner/insights">
+                        <Button variant="secondary" size="sm">
+                          Open AI insights
+                        </Button>
+                      </Link>
+                    }
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {home.in_progress.length > 1 && (
+            <section aria-labelledby="in-progress-heading">
+              <h2 id="in-progress-heading" className="mb-3 text-base font-semibold text-fg">
+                In progress
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {home.in_progress.map((course) => (
+                  <Link key={course.course_id} href={playerHref(course.course_id)} className="group">
+                    <Card className="h-full transition-shadow group-hover:shadow-md">
+                      <CardContent className="space-y-3 pt-5">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="primary">{course.category}</Badge>
+                          <Badge className="capitalize">{course.difficulty}</Badge>
+                        </div>
+                        <h3 className="font-medium text-fg">{course.title}</h3>
+                        <div>
+                          <Progress value={course.progress_percent} ariaLabel={`${course.title} progress`} size="sm" />
+                          <p className="mt-1.5 text-xs text-fg-muted">
+                            {course.completed_items} of {course.total_items} lessons
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </AppShell>
   );
 }
