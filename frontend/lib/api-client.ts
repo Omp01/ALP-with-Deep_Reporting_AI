@@ -229,10 +229,34 @@ class ApiClient {
           "timeout"
         );
       }
-      throw new ApiError("Network request failed", 0, "network_error");
+      // Auto-fallback between localhost and 127.0.0.1 to handle Windows IPv6/IPv4 loopback routing
+      const primaryUrl = buildUrl(path, params);
+      if (primaryUrl.includes("localhost") || primaryUrl.includes("127.0.0.1")) {
+        const altUrl = primaryUrl.includes("localhost")
+          ? primaryUrl.replace("localhost", "127.0.0.1")
+          : primaryUrl.replace("127.0.0.1", "localhost");
+        try {
+          response = await fetch(altUrl, {
+            method,
+            headers: this.headers(anonymous, !isFormData),
+            body: isFormData
+              ? (body as FormData)
+              : body !== undefined
+                ? JSON.stringify(body)
+                : undefined,
+            signal: controller.signal,
+            keepalive: options.keepalive,
+          });
+        } catch {
+          throw new ApiError("Network request failed", 0, "network_error");
+        }
+      } else {
+        throw new ApiError("Network request failed", 0, "network_error");
+      }
     } finally {
       clearTimeout(timer);
     }
+
 
     if (!response.ok) {
       const error = await toApiError(response);

@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ChevronLeft, ChevronRight, GraduationCap, ListTree } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, GraduationCap, ListTree, Sparkles } from "lucide-react";
 
 import { AppShell } from "@/components/shell";
 import {
@@ -23,6 +23,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { useToast } from "@/hooks/use-toast";
 import { learningService } from "@/services";
 import type { ContentProgressResult } from "@/types/learning";
+import { CourseAIChat } from "@/components/course/course-ai-chat";
 
 function LearningPlayer() {
   const router = useRouter();
@@ -33,6 +34,7 @@ function LearningPlayer() {
   const itemParam = params.get("item_id");
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   // How the learner arrived at the lesson on screen (`via` in the URL), reported with `lesson_opened`.
   const viaParam = params.get("via");
@@ -233,6 +235,15 @@ function LearningPlayer() {
           </div>
           <span className="w-9 text-right text-xs font-medium tabular-nums text-fg">{percent}%</span>
         </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setChatOpen((prev) => !prev)}
+          className="border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary transition-colors flex items-center gap-1.5 shadow-sm"
+        >
+          <Sparkles className="size-3.5 animate-pulse" aria-hidden="true" />
+          <span className="font-semibold">AI Mentor</span>
+        </Button>
         {!isDesktop && (
           <Button variant="secondary" size="sm" onClick={() => setOutlineOpen(true)}>
             <ListTree aria-hidden="true" /> Contents
@@ -304,6 +315,31 @@ function LearningPlayer() {
           {outline}
         </Dialog>
       )}
+
+      {/* Floating AI Mentor button */}
+      {!chatOpen && (
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          aria-label="Open AI Course Mentor"
+          className="fixed bottom-14 right-6 z-40 flex items-center gap-2 rounded-full bg-gradient-to-r from-primary to-primary-hover px-4 py-2.5 text-xs font-semibold text-white shadow-xl ring-2 ring-primary/30 transition-transform hover:scale-105 active:scale-95"
+        >
+          <Sparkles className="h-4 w-4 animate-pulse" />
+          <span>Ask AI Mentor</span>
+        </button>
+      )}
+
+      {/* Slide-over Course AI Chatbot */}
+      <CourseAIChat
+        courseId={course.course.id}
+        courseTitle={course.course.title}
+        currentItemId={itemParam}
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        onSelectLesson={(itemId) => {
+          go(course.course.id, itemId, "recommendation");
+        }}
+      />
     </div>
   );
 

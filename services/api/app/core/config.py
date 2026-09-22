@@ -7,7 +7,19 @@ Secrets are never hard-coded.
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
-_root_env = Path(__file__).resolve().parents[4] / ".env"
+def _find_env_file() -> Path:
+    cur = Path(__file__).resolve().parent
+    for _ in range(6):
+        candidate = cur / ".env"
+        if candidate.is_file():
+            return candidate
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return Path(".env")
+
+
+_root_env = _find_env_file()
 
 
 class Settings(BaseSettings):
@@ -62,7 +74,15 @@ class Settings(BaseSettings):
     ingestion_service_url: str = "http://127.0.0.1:8003"
 
     # Browser origins allowed to call the API (comma-separated).
-    cors_origins: str = "http://localhost:3000,http://frontend:3000"
+    cors_origins: str = (
+        "http://localhost:3000,"
+        "http://127.0.0.1:3000,"
+        "http://localhost:3001,"
+        "http://127.0.0.1:3001,"
+        "http://localhost:8000,"
+        "http://127.0.0.1:8000,"
+        "http://frontend:3000"
+    )
 
     # Logging
     log_level: str = "INFO"

@@ -4,6 +4,7 @@ AI Provider abstraction layer.
 All AI-dependent code uses this interface — never a specific provider.
 Configuration selects the concrete implementation at startup.
 """
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
@@ -77,12 +78,17 @@ class OpenAICompatibleProvider(AIProvider):
         base_url: str = "https://api.openai.com/v1",
         timeout: int = 30,
         max_retries: int = 3,
+        verify_ssl: Optional[bool] = None,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
+        if verify_ssl is not None:
+            self.verify_ssl = verify_ssl
+        else:
+            self.verify_ssl = os.getenv("VERIFY_SSL", "false").lower() in ("true", "1")
         self._client = None
 
     async def _get_client(self):
@@ -96,6 +102,7 @@ class OpenAICompatibleProvider(AIProvider):
                     "Content-Type": "application/json",
                 },
                 timeout=self.timeout,
+                verify=self.verify_ssl,
             )
         return self._client
 
@@ -210,10 +217,11 @@ class GroqProvider(OpenAICompatibleProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "llama-3.3-70b-versatile",
+        model: str = "openai/gpt-oss-120b",
         base_url: str = "https://api.groq.com/openai/v1",
         timeout: int = 30,
         max_retries: int = 3,
+        verify_ssl: Optional[bool] = None,
     ):
         super().__init__(
             api_key=api_key,
@@ -221,6 +229,7 @@ class GroqProvider(OpenAICompatibleProvider):
             base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
+            verify_ssl=verify_ssl,
         )
 
     @property
@@ -269,14 +278,19 @@ class GeminiProvider(AIProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-1.5-flash",
-        timeout: int = 30,
+        model: str = "gemini-3.6-flash",
+        timeout: int = 45,
         max_retries: int = 3,
+        verify_ssl: Optional[bool] = None,
     ):
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        if verify_ssl is not None:
+            self.verify_ssl = verify_ssl
+        else:
+            self.verify_ssl = os.getenv("VERIFY_SSL", "false").lower() in ("true", "1")
         self._client = None
 
     @property
@@ -286,7 +300,7 @@ class GeminiProvider(AIProvider):
     async def _get_client(self):
         if self._client is None:
             import httpx
-            self._client = httpx.AsyncClient(timeout=self.timeout)
+            self._client = httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl)
         return self._client
 
     async def complete(self, request: AICompletionRequest) -> AICompletionResponse:
@@ -308,20 +322,23 @@ class GeminiProvider(AIProvider):
         if not contents:
             contents.append({"role": "user", "parts": [{"text": "Generate summary"}]})
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"   # the key goes in a header: a URL is logged
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        gen_config: dict[str, Any] = {
+            "temperature": request.temperature,
+            "maxOutputTokens": request.max_tokens,
+        }
+        if _thinks(self.model):
+            gen_config["thinkingConfig"] = {"thinkingBudget": 0}
+
         payload: dict[str, Any] = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": request.temperature,
-                # Gemini 2.5 and later "think" first, and thinking tokens count against this limit:
-                # without headroom a JSON answer is cut off mid-way.
-                "maxOutputTokens": request.max_tokens + (4096 if _thinks(self.model) else 0),
-            },
+            "generationConfig": gen_config,
         }
         if system_instruction:
             payload["systemInstruction"] = system_instruction
         if request.response_format and request.response_format.get("type") == "json_object":
             payload["generationConfig"]["responseMimeType"] = "application/json"
+
 
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries):
@@ -454,14 +471,14 @@ def get_ai_provider(
     if selected == "gemini" or (not selected and gemini_key):
         return GeminiProvider(
             api_key=api_key or gemini_key,
-            model=model or os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+            model=model or os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
         )
 
     # 2. Groq Cloud
     if selected == "groq" or (not selected and groq_key):
         return GroqProvider(
             api_key=api_key or groq_key,
-            model=model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=model or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
         )
 
     # 3. Default OpenAI-compatible

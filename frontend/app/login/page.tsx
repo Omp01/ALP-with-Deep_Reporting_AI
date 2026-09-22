@@ -3,6 +3,8 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Shield, ArrowRight, UserCheck, AlertCircle, Building2 } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api-client";
+import { setSession } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -73,20 +75,40 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: targetEmail, password: targetPassword }),
-      });
+      const endpoints = [
+        `${API_BASE_URL}/api/v1/auth/login`,
+        API_BASE_URL.includes("localhost")
+          ? API_BASE_URL.replace("localhost", "127.0.0.1") + "/api/v1/auth/login"
+          : API_BASE_URL.replace("127.0.0.1", "localhost") + "/api/v1/auth/login",
+      ];
+
+      let res: Response | null = null;
+      let lastErr: unknown = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: targetEmail, password: targetPassword }),
+          });
+          if (res) break;
+        } catch (fetchErr) {
+          lastErr = fetchErr;
+        }
+      }
+
+      if (!res) {
+        throw lastErr || new Error("Cannot connect to API service. Make sure the backend is running on port 8000.");
+      }
 
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || "Authentication failed");
       }
 
       const data = await res.json();
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      setSession(data.access_token, data.user);
 
       // Route by role
       if (data.user.role === "org_admin" || data.user.role === "super_admin") {
@@ -103,12 +125,13 @@ export default function LoginPage() {
         }
         router.push("/learner/checkin");
       }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
     } finally {
       setLoading(false);
     }
   };
+
 
   const quickSelectPersona = (p: (typeof personas)[0]) => {
     setEmail(p.email);

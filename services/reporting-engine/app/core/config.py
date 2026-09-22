@@ -4,7 +4,19 @@ Reporting Engine configuration and settings.
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
-_root_env = Path(__file__).resolve().parents[3] / ".env"
+def _find_env_file() -> Path:
+    cur = Path(__file__).resolve().parent
+    for _ in range(6):
+        candidate = cur / ".env"
+        if candidate.is_file():
+            return candidate
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return Path(".env")
+
+
+_root_env = _find_env_file()
 
 
 class Settings(BaseSettings):
