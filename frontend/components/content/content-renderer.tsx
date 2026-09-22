@@ -9,6 +9,7 @@ import type { PlayerItem } from "@/types/learning";
 import { ArticleViewer } from "./article-viewer";
 import { AssignmentRenderer } from "./assignment-renderer";
 import { DocumentViewer } from "./document-viewer";
+import { InteractiveVideoPlayer } from "./interactive-video-player";
 import { MediaPlayer } from "./media-player";
 import { QuizRenderer } from "./quiz-renderer";
 import type { QuizAttemptData } from "./types";
@@ -72,7 +73,7 @@ function MediaLesson({
         )}
       </header>
 
-      {item.transcript && (
+      {item.transcript && item.content_type !== "VIDEO" && (
         <details className="rounded-xl border border-border bg-surface-elevated p-4">
           <summary className="cursor-pointer text-sm font-medium text-fg">Transcript</summary>
           <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-fg-muted">{item.transcript}</p>
@@ -121,6 +122,8 @@ export function ContentRenderer({
         <YouTubePlayer
           videoId={media.video_id}
           title={item.title}
+          contentItemId={item.id}
+          transcript={item.transcript}
           startSeconds={positionSeconds}
           initialPercent={initialPercent}
           completed={completed}
@@ -130,11 +133,29 @@ export function ContentRenderer({
     );
   }
 
-  if (media && (media.provider === "html5_video" || media.provider === "html5_audio")) {
+  if (media && media.provider === "html5_video") {
+    return (
+      <MediaLesson item={item} completed={completed}>
+        <InteractiveVideoPlayer
+          contentItemId={item.id}
+          title={item.title}
+          kind="video"
+          src={media.url}
+          transcript={item.transcript}
+          startSeconds={positionSeconds}
+          initialPercent={initialPercent}
+          completed={completed}
+          reporter={reporter}
+        />
+      </MediaLesson>
+    );
+  }
+
+  if (media && media.provider === "html5_audio") {
     return (
       <MediaLesson item={item} completed={completed}>
         <MediaPlayer
-          kind={media.provider === "html5_video" ? "video" : "audio"}
+          kind="audio"
           title={item.title}
           src={media.url}
           startSeconds={positionSeconds}
@@ -147,11 +168,28 @@ export function ContentRenderer({
 
   if (media?.provider === "file") {
     const mime = media.mime_type ?? "";
-    if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+    if (mime.startsWith("video/")) {
+      return (
+        <MediaLesson item={item} completed={completed}>
+          <InteractiveVideoPlayer
+            contentItemId={item.id}
+            title={item.title}
+            kind="video"
+            authedPath={media.url}
+            transcript={item.transcript}
+            startSeconds={positionSeconds}
+            initialPercent={initialPercent}
+            completed={completed}
+            reporter={reporter}
+          />
+        </MediaLesson>
+      );
+    }
+    if (mime.startsWith("audio/")) {
       return (
         <MediaLesson item={item} completed={completed}>
           <MediaPlayer
-            kind={mime.startsWith("video/") ? "video" : "audio"}
+            kind="audio"
             title={item.title}
             authedPath={media.url}
             startSeconds={positionSeconds}

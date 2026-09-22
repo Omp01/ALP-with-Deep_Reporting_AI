@@ -1,17 +1,28 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { CheckCircle2, ExternalLink, TriangleAlert } from "lucide-react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { CheckCircle2, ExternalLink, TriangleAlert, Sparkles, ShieldAlert } from "lucide-react";
 
-import { Button } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 import { usePlaybackTracker } from "@/hooks/use-playback-tracker";
 import type { ProgressReporter } from "@/hooks/use-progress-reporter";
+import { apiClient } from "@/lib/api-client";
+import type {
+  VideoCheckpoint,
+  VideoCheckpointAnswerResponse,
+  VideoCheckpointsPayload,
+} from "@/types/learning";
+import { TranscriptSyncPanel } from "./transcript-sync-panel";
+import { VideoFlashCard } from "./video-flash-card";
 
 /* Minimal typing for the parts of the YouTube IFrame Player API used here. */
 interface YTPlayer {
   destroy(): void;
   getCurrentTime(): number;
   getDuration(): number;
+  pauseVideo(): void;
+  playVideo(): void;
+  seekTo(seconds: number, allowSeekAhead?: boolean): void;
 }
 interface YTPlayerEvent {
   data: number;
@@ -76,6 +87,8 @@ const ERROR_TEXT: Record<number, string> = {
 export function YouTubePlayer({
   videoId,
   title,
+  contentItemId,
+  transcript,
   startSeconds,
   initialPercent,
   completed,
@@ -83,6 +96,8 @@ export function YouTubePlayer({
 }: {
   videoId: string;
   title: string;
+  contentItemId?: string;
+  transcript?: string | null;
   startSeconds: number;
   initialPercent: number;
   completed: boolean;
@@ -92,6 +107,48 @@ export function YouTubePlayer({
   const playerRef = useRef<YTPlayer | null>(null);
   const durationRef = useRef<number | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+
+  // Checkpoints & Flash-Card state
+  const [checkpoints, setCheckpoints] = useState<VideoCheckpoint[]>([]);
+  const [activeFlashCard, setActiveFlashCard] = useState<VideoCheckpoint | null>(null);
+  const [missedQueue, setMissedQueue] = useState<VideoCheckpoint[]>([]);
+  const [skipWarning, setSkipWarning] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(startSeconds || 0);
+
+  const lastValidTimeRef = useRef<number>(startSeconds || 0);
+  const checkpointsRef = useRef<VideoCheckpoint[]>([]);
+  useEffect(() => {
+    checkpointsRef.current = checkpoints;
+  }, [checkpoints]);
+
+  const activeFlashCardRef = useRef<VideoCheckpoint | null>(null);
+  useEffect(() => {
+    activeFlashCardRef.current = activeFlashCard;
+  }, [activeFlashCard]);
+
+  const dismissedCheckpointIdRef = useRef<string | null>(null);
+
+  // Load interactive checkpoints
+  useEffect(() => {
+    if (!contentItemId) return;
+    let cancelled = false;
+    async function loadCheckpoints() {
+      try {
+        const data = await apiClient.get<VideoCheckpointsPayload>(
+          `/api/v1/learning/video/${contentItemId}/checkpoints`
+        );
+        if (!cancelled && data.checkpoints) {
+          setCheckpoints(data.checkpoints);
+        }
+      } catch (err) {
+        console.warn("Could not load video checkpoints", err);
+      }
+    }
+    loadCheckpoints();
+    return () => {
+      cancelled = true;
+    };
+  }, [contentItemId]);
 
   const tracker = usePlaybackTracker(reporter, {
     initialPercent,
@@ -103,6 +160,10 @@ export function YouTubePlayer({
   useEffect(() => {
     trackerRef.current = tracker;
   });
+
+  const isCheckpointCompleted = useCallback((chk: VideoCheckpoint) => {
+    return chk.status === "correct" || chk.status === "answered";
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +200,72 @@ export function YouTubePlayer({
                 if (duration > 0) durationRef.current = duration;
                 trackerRef.current.onPlay();
                 stopPolling();
-                poll = setInterval(() => trackerRef.current.onTime(player.getCurrentTime()), POLL_MS);
+                poll = setInterval(() => {
+                  if (!playerRef.current) return;
+                  const current = playerRef.current.getCurrentTime();
+                  setCurrentTime(current);
+                  trackerRef.current.onTime(current);
+
+                  // Anti-skipping & checkpoint validation
+                  const lastValid = lastValidTimeRef.current;
+                  const delta = current - lastValid;
+                  const currentCheckpoints = checkpointsRef.current;
+
+                  // A. Detect forward seek past incomplete checkpoints
+                  if (delta > 2.5) {
+                    const missed = currentCheckpoints.filter(
+                      (chk) =>
+                        chk.timestamp_seconds > lastValid &&
+                        chk.timestamp_seconds <= current &&
+                        chk.status !== "correct" &&
+                        chk.status !== "answered"
+                    );
+
+                    if (missed.length > 0) {
+                      playerRef.current.pauseVideo();
+                      playerRef.current.seekTo(missed[0].timestamp_seconds, true);
+                      lastValidTimeRef.current = missed[0].timestamp_seconds;
+                      setSkipWarning(
+                        `Skipping restricted: Please answer Checkpoint #${missed[0].order_index || 1} first.`
+                      );
+                      setTimeout(() => setSkipWarning(null), 4000);
+                      setActiveFlashCard(missed[0]);
+                      setMissedQueue(missed.slice(1));
+                      return;
+                    }
+                  }
+
+                  // B. Natural playback reaching a checkpoint
+                  if (delta >= 0 && delta <= 2.5) {
+                    lastValidTimeRef.current = Math.max(lastValidTimeRef.current, current);
+                    const due = currentCheckpoints.find(
+                      (chk) =>
+                        Math.abs(current - chk.timestamp_seconds) <= 1.2 &&
+                        chk.status !== "correct" &&
+                        chk.status !== "answered" &&
+                        chk.id !== dismissedCheckpointIdRef.current &&
+                        (!activeFlashCardRef.current || activeFlashCardRef.current.id !== chk.id)
+                    );
+
+                    if (due) {
+                      playerRef.current.pauseVideo();
+                      setActiveFlashCard(due);
+                      return;
+                    }
+
+                    // Clear dismissed ref once we have moved past the checkpoint timestamp
+                    if (
+                      dismissedCheckpointIdRef.current &&
+                      currentCheckpoints.some(
+                        (c) =>
+                          c.id === dismissedCheckpointIdRef.current &&
+                          current > c.timestamp_seconds + 2.0
+                      )
+                    ) {
+                      dismissedCheckpointIdRef.current = null;
+                    }
+                  }
+                }, POLL_MS);
               } else if (event.data === STATE.PAUSED) {
                 stopPolling();
                 trackerRef.current.onPause();
@@ -169,16 +295,117 @@ export function YouTubePlayer({
     };
   }, [videoId, startSeconds]);
 
+  const handleAnswerCheckpoint = async (
+    selectedOptionId: string
+  ): Promise<VideoCheckpointAnswerResponse> => {
+    if (!activeFlashCard || !contentItemId) throw new Error("No active checkpoint");
+
+    const res = await apiClient.post<VideoCheckpointAnswerResponse>(
+      `/api/v1/learning/video/${contentItemId}/checkpoints/${activeFlashCard.id}/answer`,
+      { selected_option_id: selectedOptionId }
+    );
+
+    setCheckpoints((prev) =>
+      prev.map((c) =>
+        c.id === activeFlashCard.id
+          ? {
+              ...c,
+              status: res.status,
+              selected_option_id: selectedOptionId,
+              correct_option_id: res.correct_option_id,
+              explanation: res.explanation,
+            }
+          : c
+      )
+    );
+
+    return res;
+  };
+
+  const handleResumePlayback = () => {
+    if (activeFlashCard) {
+      dismissedCheckpointIdRef.current = activeFlashCard.id;
+    }
+    if (missedQueue.length > 0) {
+      const nextMissed = missedQueue[0];
+      if (playerRef.current) {
+        playerRef.current.seekTo(nextMissed.timestamp_seconds, true);
+      }
+      lastValidTimeRef.current = nextMissed.timestamp_seconds;
+      setCurrentTime(nextMissed.timestamp_seconds);
+      setActiveFlashCard(nextMissed);
+      setMissedQueue(missedQueue.slice(1));
+    } else {
+      setActiveFlashCard(null);
+      setMissedQueue([]);
+      if (playerRef.current) {
+        try {
+          playerRef.current.playVideo();
+        } catch (e) {
+          console.warn("Could not resume player", e);
+        }
+      }
+    }
+  };
+
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const completedCount = checkpoints.filter(isCheckpointCompleted).length;
 
   return (
-    <div className="space-y-3">
-      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black shadow-md">
+    <div className="space-y-4">
+      <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-xl border border-border">
+        {/* Anti-skipping warning badge */}
+        {skipWarning && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-xl border border-warning-border bg-warning-light/95 px-4 py-2 text-xs font-semibold text-fg shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+            <ShieldAlert className="size-4 text-warning animate-pulse" />
+            <span>{skipWarning}</span>
+          </div>
+        )}
+
+        {/* Checkpoint pill */}
+        {checkpoints.length > 0 && (
+          <div className="absolute top-3 left-3 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (playerRef.current) playerRef.current.pauseVideo();
+                const target = checkpoints.find((c) => c.status !== "correct" && c.status !== "answered") || checkpoints[0];
+                setActiveFlashCard(target);
+              }}
+              className="cursor-pointer transition-transform hover:scale-105 active:scale-95 focus:outline-none"
+              title="Click to view checkpoint comprehension check"
+            >
+              <Badge
+                variant={completedCount === checkpoints.length ? "success" : "neutral"}
+                className="bg-black/75 text-white backdrop-blur-md border border-white/20 flex items-center gap-1.5 shadow-md hover:bg-black/90 cursor-pointer"
+              >
+                <Sparkles className="size-3 text-primary animate-pulse" />
+                <span>
+                  {completedCount} / {checkpoints.length} Checkpoints · Click to Check
+                </span>
+              </Badge>
+            </button>
+          </div>
+        )}
+
+        {/* The YouTube iframe container */}
         <div ref={host} className="absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full" aria-label={title} />
+
+        {/* Flash Card Question Popup Overlay */}
+        {activeFlashCard && (
+          <VideoFlashCard
+            checkpoint={activeFlashCard}
+            totalCheckpoints={checkpoints.length}
+            currentIndex={checkpoints.findIndex((c) => c.id === activeFlashCard.id)}
+            initialCountdownSeconds={15}
+            onAnswer={handleAnswerCheckpoint}
+            onResume={handleResumePlayback}
+          />
+        )}
       </div>
 
       {failure && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-warning-border bg-warning-light px-4 py-3 text-sm">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-warning-border bg-warning-light px-4 py-3 text-sm">
           <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
           <span className="min-w-0 flex-1 text-fg">{failure}</span>
           <a
@@ -195,6 +422,38 @@ export function YouTubePlayer({
             </Button>
           )}
         </div>
+      )}
+
+      {/* Synchronized Transcript */}
+      {transcript && (
+        <TranscriptSyncPanel
+          transcript={transcript}
+          currentTime={currentTime}
+          checkpoints={checkpoints}
+          onSeekTo={(sec) => {
+            if (playerRef.current) {
+              if (sec <= lastValidTimeRef.current) {
+                playerRef.current.seekTo(sec, true);
+                setCurrentTime(sec);
+              } else {
+                const missed = checkpoints.filter(
+                  (chk) =>
+                    chk.timestamp_seconds > lastValidTimeRef.current &&
+                    chk.timestamp_seconds <= sec &&
+                    !isCheckpointCompleted(chk)
+                );
+                if (missed.length > 0) {
+                  playerRef.current.seekTo(missed[0].timestamp_seconds, true);
+                  setActiveFlashCard(missed[0]);
+                  setMissedQueue(missed.slice(1));
+                } else {
+                  playerRef.current.seekTo(sec, true);
+                  setCurrentTime(sec);
+                }
+              }
+            }
+          }}
+        />
       )}
     </div>
   );

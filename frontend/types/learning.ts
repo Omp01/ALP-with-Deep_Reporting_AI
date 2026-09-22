@@ -250,3 +250,52 @@ export interface ContentProgressResult {
   time_spent_seconds: number;
   position_seconds: number;
 }
+
+// --- interactive video learning -------------------------------------------------------------
+
+export interface CheckpointOption {
+  id: string;
+  text: string;
+}
+
+export type CheckpointStatus = "pending" | "displayed" | "answered" | "correct" | "incorrect";
+
+export interface VideoCheckpoint {
+  id: string;
+  content_item_id: string;
+  timestamp_seconds: number;
+  transcript_segment?: string | null;
+  question: string;
+  options: CheckpointOption[];
+  order_index: number;
+  status: CheckpointStatus;
+  selected_option_id?: string | null;
+  attempt_count: number;
+  correct_option_id?: string | null;
+  explanation?: string | null;
+}
+
+export interface VideoCheckpointsPayload {
+  content_item_id: string;
+  total_checkpoints: number;
+  completed_checkpoints: number;
+  checkpoints: VideoCheckpoint[];
+}
+
+export interface VideoCheckpointAnswerResponse {
+  checkpoint_id: string;
+  is_correct: boolean;
+  status: "correct" | "incorrect";
+  selected_option_id: string;
+  correct_option_id: string;
+  explanation?: string | null;
+  all_checkpoints_completed: boolean;
+}
+
+export interface VideoSeekValidationResponse {
+  allowed: boolean;
+  reason?: string | null;
+  first_missed_checkpoint?: VideoCheckpoint | null;
+  missed_checkpoints: VideoCheckpoint[];
+}
+
