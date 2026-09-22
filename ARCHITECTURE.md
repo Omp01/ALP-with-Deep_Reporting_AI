@@ -210,6 +210,13 @@ POST /api/v1/insights/generate { scope_type, scope_id, question }
 
 ---
 
+### Decision 7: Checkpoint-Based Anti-Skipping Video Verification
+**Rationale:** Standard video completion tracking relies on the final playback timestamp or raw percent, allowing users to scrub to the end without absorbing the material. Checkpoint-based validation evaluates contiguous playback against discrete, timestamped milestones.
+**Enforcement:** Forward seeks that bypass incomplete checkpoints are strictly intercepted on both client and server; playback is locked to the first uncompleted checkpoint until the flash-card check is answered. Backward seeking is unrestricted.
+**Anti-Cheating:** Correct option IDs and explanations are omitted from API payloads until the learner registers an answer. Progress is persisted in `learner_video_checkpoints` so page refreshes cannot bypass checks.
+
+---
+
 ## 6. Scaling Strategy
 
 | Component | Horizontal Scale Strategy |

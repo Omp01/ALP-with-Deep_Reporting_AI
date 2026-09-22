@@ -1,0 +1,414 @@
+================================================================================
+ADAPTIVE LEARNING PLATFORM WITH DEEP REPORTING AI
+COMPREHENSIVE PRESENTATION, DEFENSE & ARCHITECTURE GUIDE
+================================================================================
+
+1. EXECUTIVE PITCH & THE CORE THESIS
+--------------------------------------------------------------------------------
+The Problem in Enterprise Learning:
+Traditional corporate LMS platforms track vanity metrics: "seat time" and
+"completion", not comprehension.
+- An employee can click "Next" on 100% of a course's slides, leave the tab open
+  to run down a timer, and be marked "100% Certified" while retaining 0% of the
+  actual material.
+- Managers and L&D directors receive flat completion percentages that conceal
+  critical organizational skill gaps, declining velocity, and employee churn.
+- Generic AI implementations in education generate superficial summaries prone to
+  hallucinated statistics, dates, and non-existent learner metrics.
+
+The Solution: The Closed Learning Loop:
+This platform is a production-grade, containerized, multi-tenant B2B SaaS
+Adaptive LMS that models actual, demonstrable learner understanding:
+
+  1. Multi-Modal Content Ingestion (PDF / DOCX / YouTube -> Semantic Chunks -> Quizzes)
+     |
+     v
+  2. Daily Diagnostic Check-in (AI Quizzes + 4-Dimensional Psychometrics)
+     |
+     v
+  3. Immutable Learning Telemetry (20 Server-Validated Real-Time Event Types)
+     |
+     v
+  4. Deterministic Bayesian Knowledge Tracing (Corbett-Anderson BKT Mastery Ledger)
+     |
+     v
+  5. Explainable Pedagogical Adaptation ("Why am I seeing this?" recommendation)
+     |
+     v
+  6. Multi-Signal Early Warning Anomaly Engine (6 Automated Risk Detection Signals)
+     |
+     v
+  7. Grounded AI Reporting (Multi-Audience, 100% Evidence Citations, Zero Hallucination)
+
+
+2. TECHNOLOGY STACK & ARCHITECTURAL DECISIONS (ADRs)
+--------------------------------------------------------------------------------
+1. Frontend Framework: Next.js 14 App Router (React 19, TypeScript)
+   - Why Chosen: Server Component streaming, file-system routing, built-in
+     layout management for multi-role shells (learner, manager, admin), high-
+     performance client hydration.
+   - Alternatives Rejected:
+     * Vite SPA: Lacks modern layout hierarchies, SEO, and enterprise route
+       pre-rendering.
+     * Remix: Strong contender, but Next.js has broader enterprise ecosystem
+       adoption and native containerization.
+
+2. Frontend Styling: Tailwind CSS + Custom Token Bridge
+   - Why Chosen: Strict token system (bg-surface, text-fg-muted, border-border)
+     mapped to CSS variables for dark/light themes, zero runtime CSS overhead,
+     accessible contrast ratios.
+   - Alternatives Rejected:
+     * Chakra UI / MUI: Heavy runtime CSS-in-JS performance penalty.
+     * Vanilla CSS: Too slow to author consistently across 25+ views without
+       utility conventions.
+
+3. API Gateway: FastAPI (Python 3.11, Pydantic v2, asyncpg, SQLAlchemy 2)
+   - Why Chosen: Native async I/O, automatic OpenAPI/Swagger generation,
+     Pydantic v2 high-speed C-based schema validation, seamless Python AI
+     ecosystem integration.
+   - Alternatives Rejected:
+     * Django / DRF: Synchronous by default, heavier ORM overhead, excessive
+       boilerplate for microservice routing.
+     * Node.js / Express: Fast, but separates the API from Python-native ML/data
+       science tools (PyMuPDF, sentence-transformers, NumPy).
+     * Go (Golang): Exceptional concurrency, but lacks native libraries for
+       document parsing, PyMuPDF, and AI evaluation scripts.
+
+4. Primary Database & Vector Store: PostgreSQL 16 + pgvector
+   - Why Chosen: ACID compliance for enterprise-grade auditing, complex
+     relational JOINs across 25 entities, JSONB for flexible telemetry payloads,
+     and pgvector for unified 384-dim semantic embeddings in one DB.
+   - Alternatives Rejected:
+     * MongoDB: Document model fails for strict foreign key constraints
+       (courses -> modules -> items -> competencies -> attempts).
+     * PostgreSQL + Pinecone/Weaviate: Adds a second distributed database to
+       manage, network latency overhead, and dual-write consistency hazards.
+     * MySQL: Lacks native vector similarity search extension.
+
+5. Event Bus & Caching: Redis 7 (Redis Streams)
+   - Why Chosen: Lightweight persistent streaming via XADD, XREADGROUP, and
+     XACK. Enables decoupled event workers, consumer groups, idempotency, and
+     session caching in a single small footprint.
+   - Alternatives Rejected:
+     * Apache Kafka: Heavy JVM footprint, Zookeeper/KRaft operational
+       complexity, overkill for <100k events/sec.
+     * RabbitMQ: Message queue rather than an append-only replayable event log.
+     * PostgreSQL LISTEN/NOTIFY: Lacks consumer groups, backpressure handling,
+       and message replay.
+
+6. Object Storage: MinIO (S3-Compatible)
+   - Why Chosen: Local self-hosted S3-compliant object store for PDFs, DOCXs,
+     and media uploads. Allows 100% cloud-agnostic zero-cost local development,
+     swappable for AWS S3 with one environment variable.
+   - Alternatives Rejected:
+     * Local Disk Storage: Breaks container scalability and multi-node
+       horizontal deployment.
+     * Direct AWS S3: Incurs cloud costs during local dev and breaks offline
+       demo capabilities.
+
+7. Document Processing: PyMuPDF, python-docx, python-pptx, sentence-transformers
+   - Why Chosen: Robust text extraction, preserves structural document
+     hierarchy, sentence-level semantic chunking without loss of context.
+   - Alternatives Rejected:
+     * LangChain Document Loaders: Bloated dependency tree, brittle version
+       churn, slow parsing speed.
+
+
+3. END-TO-END SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+System Topology:
+  Client Browser (Next.js 14: http://localhost:3000)
+       |
+       | REST API / HTTP (Bearer JWT with org_id + role)
+       v
+  API GATEWAY (Port 8000)
+    * JWT Auth & 5-Role RBAC (learner -> super_admin)
+    * TenantMiddleware (Row-Level org_id isolation)
+    * Telemetry Ingestion (POST /events -> DB + Redis)
+    * Document Ingestion & Content CRUD
+       |                      |
+       | Internal HTTP        | Internal HTTP
+       v                      v
+  ADAPTIVE ENGINE (8001)   REPORTING ENGINE (8002)
+    * Corbett-Anderson BKT   * Deterministic Evidence Builder
+    * Policy Engine          * Multi-Provider AI (Gemini/Groq/Ollama)
+    * Prerequisite DAG       * Citation Grounding Validator
+    * Skill Gap Analytics    * Scheduled Digest Generator
+       |                      |
+       v                      v
+  PERSISTENCE & EVENT BUS LAYER:
+    * PostgreSQL 16 + pgvector (Relational Data + Vectors)
+    * Redis 7 Streams (Decoupled Event Bus)
+    * MinIO S3 (Raw Documents & Media)
+       |
+       | XREADGROUP
+       v
+  BACKGROUND WORKERS:
+    * Event Worker: Consumes `learning_events` stream -> calls Adaptive Engine
+    * Risk Worker: Periodic 6-signal anomaly scanner -> upserts `learner_risks`
+    * Digest Worker: Scheduled weekly report synthesizer -> `report_digests`
+
+The Event-Driven Outbox Flow:
+1. Learner answers a question or completes a module.
+2. Synchronous write: API Gateway commits immutable record to `learning_events`
+   table (client timestamp, server timestamp, response latency ms, accuracy,
+   error taxonomy).
+3. Asynchronous dispatch: In same request cycle, published to Redis Stream
+   `learning_events` via XADD.
+4. Asynchronous worker: `alms-event-worker` reads stream via XREADGROUP, updates
+   learner's Bayesian Knowledge Tracing state, and sends XACK.
+5. Decoupled reporting (ADR-005): Reporting Engine NEVER calls Adaptive Engine
+   internal APIs. It queries PostgreSQL directly, ensuring complete service
+   independence.
+
+
+4. CORE ALGORITHMS & TECHNICAL INNOVATIONS
+--------------------------------------------------------------------------------
+1. Explainable Competency Modeling: Corbett-Anderson BKT
+   - Instead of "black box" Deep Knowledge Tracing (DKT / RNNs) where mastery
+     cannot be audited, the platform implements classical Bayesian Knowledge
+     Tracing (BKT).
+   - Knowledge probability P(L_t) is governed by 4 pedagogical parameters:
+     * P(L_0) [Prior]: Initial probability of knowing the skill (Default: 0.10)
+     * P(T) [Transition]: Probability of learning skill between steps (Default: 0.15)
+     * P(G) [Guess]: Probability of guessing correctly (Default: 0.20)
+     * P(S) [Slip]: Probability of making a careless slip (Default: 0.05)
+
+   - Posterior Updates:
+     If correct (obs = 1):
+       P(L_t | obs=1) = [P(L_{t-1}) * (1 - P(S))] /
+                        [P(L_{t-1}) * (1 - P(S)) + (1 - P(L_{t-1})) * P(G)]
+     If incorrect (obs = 0):
+       P(L_t | obs=0) = [P(L_{t-1}) * P(S)] /
+                        [P(L_{t-1}) * P(S) + (1 - P(L_{t-1})) * (1 - P(G))]
+     Transition to next opportunity:
+       P(L_{t+1}) = P(L_t | obs) + (1 - P(L_t | obs)) * P(T)
+
+   - The "Chain Verified & Recomputed" Proof:
+     * Reading or watching content NEVER increments mastery. Only verified,
+       graded evidence changes mastery.
+     * Clicking "Why X%?" opens an audit drawer that re-executes the Bayesian
+       formula from raw evidence in real time.
+     * A green shield badge ("Chain Verified & Recomputed") proves the figure
+       matches the exact mathematical formula.
+
+2. Evidence-Based Adaptive Sequencing ("Why am I seeing this?")
+   - Deterministic pedagogical policies evaluated against the curriculum Skill
+     Graph DAG:
+     * ADVANCE: Mastery >= 0.80 and Confidence >= 0.75
+     * REMEDIATE: Mastery < 0.50 with >= 2 consecutive errors
+     * SKIP: Diagnostic score >= 0.95 (Expert bypass)
+     * CHANGE MODALITY: Error rate > 60% on reading -> switches to video/practice
+     * REVISIT: Declining retention velocity -> spaced repetition review
+     * ASSESS: Content completed since last check -> requires understanding check
+   - Total Transparency: Clicking "Why am I seeing this?" displays the exact
+     pedagogical rule, recent error taxonomy, and estimated mastery. Nothing is
+     hardcoded.
+
+3. Login Check-in & 4-Dimensional Psychometrics:
+   - On every login, learners take a fast diagnostic check-in:
+     * 5 AI-written curriculum questions with verbatim source quotes.
+     * 12 psychometric statements measuring: Cognitive Load, Learning Anxiety,
+       Self-Efficacy, and Engagement.
+     * Psychological Safety: Psychometric self-reports are strictly private to
+       the learner and never leaked to managers.
+
+4. Multi-Signal Early Warning Anomaly Engine:
+   - Autonomous background scanner evaluating 6 objective risk signals:
+     1. Persistent Low Mastery: Mastery < 0.40 after >= 5 attempts.
+     2. Negative Velocity (Regression): Delta < -0.15 over 3 sessions.
+     3. Retry Loops: >= 3 repeated failed attempts on the same item.
+     4. Response Latency Anomalies: Answer time < 3s (guessing) or > 300s (paralysis).
+     5. Consecutive Quiz Failures: 2 or more failed diagnostics in a module.
+     6. Disengagement / Inactivity: 10+ consecutive days of zero activity.
+
+5. 100% Grounded AI Reporting & Citation Validator:
+   - Evidence-first workflow:
+     1. Evidence Builder pre-computes analytics into indexed facts: [E-1], [E-2].
+     2. LLM Prompt Constraint: "You may only state facts supported by [E-#]."
+     3. Citation Validator verifies every citation against real SQL records and
+        rejects hallucinated numbers or IDs.
+     4. UI displays clickable [E-#] pills opening the exact underlying database
+        records in an evidence drawer.
+
+
+5. LLM STRATEGY: WHICH LLM IS USED, WHY, AND ALTERNATIVES
+--------------------------------------------------------------------------------
+The Abstracted AIProvider Interface (ADR-004):
+- The platform uses a vendor-agnostic `AIProvider` abstract base class.
+- Supported Providers:
+  1. Ollama (Default Local): llama3.2 / qwen2.5 / mistral
+     * Why: 100% free, private, zero data leakage, works offline and in
+       air-gapped environments.
+  2. Google Gemini: gemini-2.5-flash / gemini-1.5-pro
+     * Why: 1M+ context window, cheap inference, structured JSON output,
+       thinking token budget allocation.
+  3. Groq: llama-3.3-70b-versatile
+     * Why: Sub-400ms inference speed via LPUs for real-time grading.
+  4. OpenAI: gpt-4o / gpt-4o-mini
+     * Why: Industry benchmark for standardized output testing.
+  5. Anthropic: claude-3-5-sonnet
+     * Why: Nuanced reasoning for grading complex open-ended written answers.
+  6. Deterministic Offline Engine (Zero-LLM Fallback):
+     * Why: If API keys are missing or network fails, the platform generates
+       100% compliant insight reports deterministically with zero runtime crashes.
+
+Why We Avoided LangChain & LiteLLM:
+- LangChain introduces 100+ dependency packages, breaking version changes, and
+  obscure debugging stacks.
+- LiteLLM requires running an extra proxy server container.
+- Our custom async Python provider is ~150 lines of clean code using standard
+  `httpx` with automatic retries.
+
+
+6. WHAT WE STORE AND WHERE WE STORE IT
+--------------------------------------------------------------------------------
+1. PostgreSQL 16 (25 Domain Tables):
+   - Multi-Tenant Identity: `organizations`, `users`, `role_definitions`,
+     `user_roles`, `teams`, `user_teams`.
+   - Curriculum & DAG: `courses`, `modules`, `content_items`, `content_chunks`,
+     `competencies`, `competency_prerequisites`.
+   - Assessment: `assessment_items`, `quizzes`, `quiz_questions`,
+     `quiz_options`, `quiz_attempts`, `question_responses`.
+   - State & Telemetry: `learning_events` (immutable), `learner_competencies`,
+     `competency_history`, `adaptive_decisions`, `learner_risks`.
+   - Insights & Checkins: `checkins`, `checkin_responses`, `ai_insights`,
+     `report_digests`, `embed_tokens`.
+
+2. pgvector (Vector Store inside PostgreSQL):
+   - `content_chunks.embedding`: 384-dimensional dense semantic vectors
+     generated via sentence-transformers for content and competency matching.
+
+3. Redis 7:
+   - Redis Streams (`learning_events` stream for worker consumers).
+   - Consumer group offsets and delivery acknowledgments.
+   - User session caching and rate-limiting counters.
+
+4. MinIO (S3-Compatible Object Store):
+   - Raw uploaded PDFs, DOCX, PPTX files.
+   - Video captions, audio transcripts, and content media assets.
+
+5. Client Storage:
+   - `localStorage`: JWT access token, user profile metadata.
+   - `sessionStorage`: In-progress checkin session state.
+
+
+7. ENTERPRISE SECURITY & MULTI-TENANCY
+--------------------------------------------------------------------------------
+Row-Level Multi-Tenancy (ADR-006):
+- Every tenant-owned table includes an indexed `org_id` column.
+- The user logs in; the API issues a signed JWT containing `org_id` and `role`.
+- `TenantMiddleware` extracts and validates `org_id` on every inbound request.
+- Route handlers inject `TenantContext`; SQLAlchemy queries strictly append
+  `.where(Model.org_id == tenant_ctx.org_id)`.
+- Automated test `test_cross_tenant_isolation` verifies that Organization A
+  cannot access Organization B's data under any condition.
+
+5-Role RBAC Model:
+- `learner`: Personal learning player, check-in, competencies, personal AI insights.
+- `manager`: Team dashboard, cohort skill gaps, early warning alerts, weekly digests.
+- `instructor`: Human-in-the-loop written answer grading queue, assessment metrics.
+- `org_admin`: Ingestion pipeline, question approval, Skill Graph DAG, BI exports.
+- `system_admin`: Cross-tenant system administration and configuration.
+
+
+8. PRESENTATION CHEAT SHEET: 3-MINUTE VERBAL PITCH
+--------------------------------------------------------------------------------
+"Good morning. Today, enterprises spend over $300 billion annually on corporate
+training. Yet according to industry studies, less than 20% of corporate learning
+is actually applied on the job.
+
+Why? Because traditional LMS platforms track seat time and completion, not
+comprehension. If an employee clicks through every slide of a course without
+reading, the LMS marks them 100% certified.
+
+We built the Adaptive Learning Platform with Deep Reporting AI to solve this
+comprehension gap.
+
+Here is how it works:
+First, we replace black-box completion with deterministic Bayesian Knowledge
+Tracing. When a learner interacts with our system, reading or watching videos
+never counts towards mastery—only verified, graded answers do. Every score is a
+mathematical probability that can be recomputed and audited down to the exact
+timestamp.
+
+Second, our platform delivers transparent adaptation. When our engine recommends
+a next step—whether it's remediation, advancement, or changing from text to
+video—the learner can click 'Why am I seeing this?' and see the exact
+pedagogical rule, error history, and mastery state that drove the decision.
+Nothing is a black box.
+
+Third, our autonomous Early Warning Engine monitors six objective anomaly
+signals, alerting managers to disengaged learners and knowledge dropouts weeks
+before they fail.
+
+And finally, our Deep Reporting AI is built on an evidence-first architecture.
+Before an LLM writes a single word, our engine pre-computes an index of verified
+database facts. Every statement in our reports includes a clickable citation
+pill—[E-1], [E-2]—that opens the exact underlying SQL record in an evidence
+drawer. If an AI hallucinates a number or metric, our Citation Validator
+automatically flags and rejects it.
+
+Built on Next.js 14, FastAPI, PostgreSQL 16 with pgvector, and Redis Streams,
+the platform is fully containerized, multi-tenant, and capable of running local
+private LLMs via Ollama or cloud models via Gemini and Groq.
+
+Let's jump into the live system."
+
+
+9. ANTICIPATED Q&A DEFENSE
+--------------------------------------------------------------------------------
+Q: "Why did you choose Bayesian Knowledge Tracing (BKT) instead of Deep
+    Knowledge Tracing (DKT) with neural networks?"
+A: "Neural networks like DKT offer marginal predictive accuracy gains on large
+    benchmark datasets, but they are complete black boxes. In enterprise
+    compliance, healthcare, and engineering certifications, an organization
+    cannot tell an auditor: 'The neural network gave you a 42% and we don't know
+    why.' BKT gives us exact mathematical interpretability, sub-millisecond
+    execution times without GPU dependencies, and allows us to provide the
+    learner with a complete cryptographic and audit-verified explanation chain."
+
+Q: "How do you guarantee the AI won't hallucinate metrics or statistics in
+    executive reports?"
+A: "We decouple the analytics calculation from the text generation. The LLM is
+    never asked to calculate averages, counts, or mastery deltas. Our
+    deterministic Evidence Builder computes all metrics directly from
+    PostgreSQL first and tags them with atomic keys like [E-1] and [E-2]. The
+    LLM's prompt restricts it to synthesizing only what is in the evidence
+    package. Finally, our Citation Validator runs post-generation validation:
+    if the LLM cites a number not present in the evidence, or references a non-
+    existent evidence ID, the claim is refused and flagged with a hallucination
+    penalty."
+
+Q: "What happens if a customer wants to run this completely on-premise without
+    sending data to OpenAI or Google?"
+A: "The system is cloud-agnostic and privacy-ready by design. Our AIProvider
+    interface natively supports Ollama. An enterprise can run local open-weight
+    models like Llama 3.2 or Qwen 2.5 on their own private servers or air-gapped
+    infrastructure without a single byte of telemetry leaving their private
+    network. Additionally, our offline deterministic engine can generate 100%
+    compliant reports with zero AI dependencies."
+
+Q: "How does the system handle high-volume learning telemetry without slowing
+    down the user experience?"
+A: "We implement an event-driven outbox architecture using Redis Streams. When a
+    user submits an answer, the API immediately records the event to PostgreSQL
+    and pushes it to Redis Streams via XADD. The user receives their HTTP
+    response in under 50 milliseconds. Independent asynchronous background
+    workers (alms-event-worker) consume the stream using Redis consumer groups
+    (XREADGROUP) to update Bayesian mastery states without creating database
+    locking bottlenecks."
+
+Q: "How is multi-tenancy enforced, and can one company ever see another
+    company's training data?"
+A: "We enforce row-level multi-tenancy at the database query layer. Every
+    database table includes an indexed org_id. When a user authenticates, their
+    org_id is cryptographically signed into their JWT. Our API middleware
+    extracts this tenant ID and injects it into every SQLAlchemy query via
+    automated filter clauses. We also have automated integration tests
+    (test_cross_tenant_isolation) that verify a token from Organization A
+    receives a 404 Not Found or 403 Forbidden if attempting to query
+    Organization B's records."
+================================================================================
+END OF PRESENTATION GUIDE
+================================================================================

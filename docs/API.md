@@ -29,7 +29,9 @@ Interactive OpenAPI Swagger UI is available locally at: **[http://localhost:8000
 | `POST` | `/api/v1/courses` | Instructor, Admin | Creates a new curriculum course. |
 | `GET` | `/api/v1/courses/{id}` | Any Authenticated | Retrieves course details and sequenced modules. |
 | `POST` | `/api/v1/courses/{id}/modules` | Instructor, Admin | Adds a sequenced module to a course. |
+| `POST` | `/api/v1/courses/{id}/chat` | Any Authenticated | In-course AI Chatbot: course summarization, personalized learning paths, and interactive tutoring. |
 | `POST` | `/api/v1/modules/{id}/content` | Instructor, Admin | Adds a content asset to a module (text, slide, video, quiz). |
+
 | `GET` | `/api/v1/enrollments` | Any Authenticated | Lists learner course enrollments and milestone progress. |
 | `POST` | `/api/v1/enrollments` | Any Authenticated | Enrolls a learner in a curriculum course. |
 
@@ -79,6 +81,18 @@ Full reference: [EVENT_MODEL.md](EVENT_MODEL.md).
 | `GET` | `/api/v1/events` | Any authenticated | Query with filters (`user_id`, `session_id`, `course_id`, `module_id`, `content_id`, `assessment_id`, `question_id`, `competency_id`, repeatable `event_type`, `since`, `until`, `order`, `limit`, `cursor`) → `{items, next_cursor}`; learners see their own, managers their team's, admins the tenant's |
 | `GET` | `/api/v1/events/{id}` | Visible to caller | One event |
 | `GET` | `/api/v1/events/stats` | L&D, org admin, manager | Counts by type and day, learners, sessions, for what the caller may see |
+
+---
+
+## 4b. Interactive Video Learning & Anti-Skipping Checkpoints
+
+| Method | Path | Role | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/learning/video/{content_item_id}/checkpoints` | Any authenticated | Retrieves video checkpoints with learner's completion status; generates on-demand from transcript if none exist. |
+| `POST` | `/api/v1/learning/video/{content_item_id}/checkpoints/generate` | Any authenticated | Force AI regeneration of comprehension checkpoints from the video transcript. |
+| `POST` | `/api/v1/learning/video/{content_item_id}/checkpoints/{checkpoint_id}/status` | Any authenticated | Updates checkpoint status (e.g. `displayed` when flash card pops up). |
+| `POST` | `/api/v1/learning/video/{content_item_id}/checkpoints/{checkpoint_id}/answer` | Any authenticated | Submits learner's answer choice (`selected_option_id`); returns correctness, correct option, and transcript explanation. |
+| `POST` | `/api/v1/learning/video/{content_item_id}/validate-seek` | Any authenticated | Audits and validates a proposed playback seek (`current_time` -> `target_time`); blocks forward skip if intermediate checkpoints are uncompleted. |
 
 ---
 
