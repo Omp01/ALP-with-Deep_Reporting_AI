@@ -247,11 +247,13 @@ class ApiClient {
             signal: controller.signal,
             keepalive: options.keepalive,
           });
-        } catch {
-          throw new ApiError("Network request failed", 0, "network_error");
+        } catch (altErr) {
+          const detailMsg = (altErr as Error)?.message || (err as Error)?.message || "Network request failed";
+          throw new ApiError(`Network request failed (${detailMsg})`, 0, "network_error", { primaryError: err, altError: altErr });
         }
       } else {
-        throw new ApiError("Network request failed", 0, "network_error");
+        const detailMsg = (err as Error)?.message || "Network request failed";
+        throw new ApiError(`Network request failed (${detailMsg})`, 0, "network_error", { primaryError: err });
       }
     } finally {
       clearTimeout(timer);
