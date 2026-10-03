@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { CloudOff } from "lucide-react";
 
 import { ContentRenderer } from "@/components/content/content-renderer";
+import { PsychometricMicroPrompt } from "@/components/content/psychometric-micro-prompt";
 import { useLearningEvents } from "@/hooks/use-learning-events";
 import { useProgressReporter } from "@/hooks/use-progress-reporter";
 import type { ContentProgressResult, PlayerPayload } from "@/types/learning";
@@ -50,6 +51,12 @@ export function LessonView({
   );
 
   const completed = progress.status === "completed" || completedNow;
+  const promptStage =
+    item.kind === "assessment"
+      ? "after_assessment"
+      : item.content_type === "VIDEO"
+      ? "after_video"
+      : "during_course";
 
   return (
     <div className="space-y-4">
@@ -69,6 +76,16 @@ export function LessonView({
         onQuizGraded={onServerCompleted}
         onContinue={onContinue}
       />
+
+      <div className="mx-auto max-w-4xl pt-2">
+        <PsychometricMicroPrompt
+          stage={promptStage}
+          courseId={item.course_id}
+          moduleId={item.module_id}
+          contentItemId={item.id}
+          topic={item.competency_names?.[0] || item.title}
+        />
+      </div>
     </div>
   );
 }

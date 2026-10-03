@@ -8,6 +8,9 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+from app.schemas.video_checkpoint import CheckpointRemediation
+
+
 # -----------------------------------------------------------------------------
 # Options & Questions
 # -----------------------------------------------------------------------------
@@ -32,6 +35,9 @@ class QuizQuestionResponse(BaseModel):
     points: int = 1
     order_index: int = 0
     explanation: Optional[str] = None
+    topic: Optional[str] = None
+    source_content_item_id: Optional[UUID] = None
+    source_timestamp_seconds: Optional[float] = None
     # Written questions: what the answer is judged on. The expected answer is never sent to learners.
     rubric: Optional[List[dict]] = None
     options: List[QuizOptionResponse] = []
@@ -95,6 +101,8 @@ class QuestionGradedResponse(BaseModel):
     score_fraction: Optional[float] = None         # share of the points, 0..1
     graded_by: Optional[str] = None                # ai | human
     feedback: Optional[str] = None
+    topic: Optional[str] = None
+    remediation: Optional[CheckpointRemediation] = None
 
     class Config:
         from_attributes = True

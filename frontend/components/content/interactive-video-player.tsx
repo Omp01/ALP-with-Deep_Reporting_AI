@@ -278,12 +278,33 @@ export function InteractiveVideoPlayer({
               selected_option_id: selectedOptionId,
               correct_option_id: res.correct_option_id,
               explanation: res.explanation,
+              score: res.score,
+              max_score: res.max_score,
+              attempt_count: res.attempt_number ?? (c.attempt_count + 1),
+              formula_id: res.formula_id,
+              calculation_details: res.calculation_details,
             }
           : c
       )
     );
 
     return res;
+  };
+
+  // Direct video seek for remediation/review requested from a flashcard
+  const handleSeekToSection = (startSeconds: number) => {
+    if (!videoRef.current) return;
+    const target = Math.max(0, startSeconds);
+    // Seeking backward to review prior material is safe; dismiss flashcard modal
+    videoRef.current.currentTime = target;
+    setCurrentTime(target);
+    setActiveFlashCard(null);
+    setSkipWarning(`Reviewing lesson section starting at ${formatTime(target)}`);
+    setTimeout(() => setSkipWarning(null), 3500);
+    videoRef.current.play().then(() => {
+      setIsPlaying(true);
+      tracker.onPlay();
+    }).catch(() => {});
   };
 
   // Resume after completing a checkpoint
@@ -551,6 +572,7 @@ export function InteractiveVideoPlayer({
             initialCountdownSeconds={15}
             onAnswer={handleAnswerCheckpoint}
             onResume={handleResumePlayback}
+            onSeekToSection={handleSeekToSection}
           />
         )}
 

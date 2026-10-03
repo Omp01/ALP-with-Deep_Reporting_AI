@@ -61,6 +61,9 @@ from app.models import (
     ContentProgress,
     ContentCompetency,
     AdaptiveDecision,
+    PsychometricQuestion,
+    LearnerPsychometricResponse,
+    LearnerTopicProgression,
 )
 
 DEFAULT_PASSWORD_HASH = hash_password("Password123!")
@@ -1065,8 +1068,140 @@ Generative AI systems deployed in enterprise environments cannot rely on raw unc
                         )
                         session.add(cp2)
 
+        # ---------------------------------------------------------------------
+        # 7. Seed Psychometric Questions across 7 Stages for All 5 Courses
+        # ---------------------------------------------------------------------
+        print("  [*] Seeding Psychometric Learning Assessment Framework items...")
+        
+        stages_questions_specs = [
+            {
+                "stage": "before_course",
+                "construct": "confidence",
+                "text": "How confident are you in your baseline understanding of {course_title}?",
+                "labels": {"1": "Novice / No prior experience", "2": "Basic familiarity", "3": "Moderate working knowledge", "4": "Confident practitioner", "5": "Subject matter expert"},
+                "order": 1,
+            },
+            {
+                "stage": "before_course",
+                "construct": "motivation",
+                "text": "How motivated are you to apply what you learn in {course_title} to real-world engineering projects?",
+                "labels": {"1": "Low motivation", "2": "Slight motivation", "3": "Moderately motivated", "4": "Highly motivated", "5": "Extremely motivated"},
+                "order": 2,
+            },
+            {
+                "stage": "during_course",
+                "construct": "cognitive_effort",
+                "text": "How manageable is the mental effort required to absorb the concepts presented in this section?",
+                "labels": {"1": "Very overwhelming", "2": "Somewhat difficult", "3": "Moderate effort", "4": "Easily manageable", "5": "Effortless & intuitive"},
+                "order": 3,
+            },
+            {
+                "stage": "after_video",
+                "construct": "perceived_understanding",
+                "text": "How clearly do you feel you understood the core concepts demonstrated in this lesson video?",
+                "labels": {"1": "Very unclear", "2": "Partially clear", "3": "Adequately understood", "4": "Very clear", "5": "Crystal clear"},
+                "order": 4,
+            },
+            {
+                "stage": "after_assessment",
+                "construct": "confidence",
+                "text": "How confident were you in reasoning through the questions in this assessment?",
+                "labels": {"1": "Purely guessing", "2": "Slightly uncertain", "3": "Fairly confident", "4": "Strongly confident", "5": "Completely certain"},
+                "order": 5,
+            },
+            {
+                "stage": "after_assessment",
+                "construct": "retention_confidence",
+                "text": "How confident are you that you can independently recall and apply these principles in 30 days?",
+                "labels": {"1": "Very doubtful", "2": "Low retention", "3": "Moderate retention", "4": "High retention", "5": "Permanent retention"},
+                "order": 6,
+            },
+            {
+                "stage": "end_of_module",
+                "construct": "self_assessed_mastery",
+                "text": "How would you rate your independent problem-solving readiness for the topics in this module?",
+                "labels": {"1": "Need extensive assistance", "2": "Need occasional reference", "3": "Comfortable with guidance", "4": "Independent & capable", "5": "Proficient & fluent"},
+                "order": 7,
+            },
+            {
+                "stage": "end_of_course",
+                "construct": "application_readiness",
+                "text": "How prepared do you feel to build, deploy, or troubleshoot systems using {course_title} in production?",
+                "labels": {"1": "Not prepared yet", "2": "Prepared with supervision", "3": "Moderately prepared", "4": "Well prepared", "5": "Fully production-ready"},
+                "order": 8,
+            },
+            {
+                "stage": "end_of_course",
+                "construct": "reflection",
+                "text": "Reflecting on your learning journey through {course_title}, how significant was your skill progression?",
+                "labels": {"1": "Minimal progression", "2": "Slight progression", "3": "Noticeable progression", "4": "Significant advancement", "5": "Transformational growth"},
+                "order": 9,
+            },
+        ]
+
+        for course in all_courses:
+            for spec in stages_questions_specs:
+                q_text = spec["text"].format(course_title=course.title)
+                existing_pq = session.query(PsychometricQuestion).filter_by(
+                    org_id=course.org_id,
+                    course_id=course.id,
+                    stage=spec["stage"],
+                    construct=spec["construct"],
+                ).first()
+                if not existing_pq:
+                    pq = PsychometricQuestion(
+                        id=uuid.uuid4(),
+                        org_id=course.org_id,
+                        course_id=course.id,
+                        stage=spec["stage"],
+                        construct=spec["construct"],
+                        question_text=q_text,
+                        scale_type="likert_5",
+                        scale_min=1,
+                        scale_max=5,
+                        scale_labels=spec["labels"],
+                        order_index=spec["order"],
+                        is_reverse_keyed=False,
+                        is_active=True,
+                        cooldown_seconds=1800,
+                    )
+                    session.add(pq)
+        session.flush()
+
+        # Seed sample psychometric responses for the cohort to create realistic calibration quadrants
+        py_course = next((c for c in all_courses if "Python" in c.title), all_courses[0])
+        py_questions = session.query(PsychometricQuestion).filter_by(course_id=py_course.id).all()
+        
+        learner_calib_profiles = [
+            (acme_learners[0], 5, 100.0),  # Alice: 5 (100 norm) -> Calibrated Mastery
+            (acme_learners[1], 5, 100.0),  # Bob: 5 (100 norm) -> Blind Spot
+            (acme_learners[2], 2, 25.0),   # Carol: 2 (25 norm) -> Underestimated Competence
+            (acme_learners[3], 2, 25.0),   # Dan: 2 (25 norm) -> Accurate Struggle
+        ]
+        
+        for learner, raw_val, norm_val in learner_calib_profiles:
+            for pq in py_questions:
+                existing_resp = session.query(LearnerPsychometricResponse).filter_by(
+                    user_id=learner.id, question_id=pq.id
+                ).first()
+                if not existing_resp:
+                    resp = LearnerPsychometricResponse(
+                        id=uuid.uuid4(),
+                        org_id=learner.org_id,
+                        user_id=learner.id,
+                        question_id=pq.id,
+                        course_id=py_course.id,
+                        stage=pq.stage,
+                        construct=pq.construct,
+                        raw_response={"value": raw_val},
+                        normalized_score=norm_val,
+                        answered_at=datetime.utcnow() - timedelta(hours=1),
+                    )
+                    session.add(resp)
+
         session.commit()
         print(f"  [OK] Enrolled {len(acme_learners)} Learners and seeded realistic progress & quiz attempts.")
+        print("  [OK] Seeded Psychometric Questions and calibrated cohort response benchmarks!")
         print("\nStage 2 Database Seeding Completed Successfully! 100% Dynamic.")
 
     except Exception as e:

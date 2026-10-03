@@ -39,6 +39,25 @@ export interface EvidenceSource {
   title?: string;
 }
 
+export interface DetailedEvidenceRecord {
+  id: string;
+  org_id?: string;
+  user_id: string;
+  competency_id: string;
+  source_type: string;
+  source_event_id: string | null;
+  session_id: string | null;
+  signal: number;
+  confidence: number;
+  error_type: string | null;
+  evidence_quote: string | null;
+  difficulty: number | null;
+  attempt_number: number | null;
+  response_time_ms: number | null;
+  occurred_at: string;
+  source: Record<string, any>;
+}
+
 export interface ChainStep {
   sequence: number;
   update_id: string;
@@ -58,6 +77,7 @@ export interface ChainStep {
   occurred_at: string;
   note: string | null;
   summary: string;
+  method?: string;
 }
 
 export interface Explanation {
@@ -184,6 +204,24 @@ export const ERROR_TYPES = [
   "unknown",
 ] as const;
 
+export interface DetailedEvidenceRecord {
+  id: string;
+  user_id: string;
+  competency_id: string;
+  source_type: string;
+  source_event_id: string | null;
+  session_id: string | null;
+  signal: number;
+  confidence: number;
+  error_type: string | null;
+  evidence_quote: string | null;
+  difficulty: number | null;
+  attempt_number: number | null;
+  response_time_ms: number | null;
+  occurred_at: string;
+  source: Record<string, any>;
+}
+
 export const masteryService = {
   mine(signal?: AbortSignal) {
     return apiClient.get<{ user_id: string; competencies: CompetencyState[] }>("/api/v1/mastery/me", { signal });
@@ -196,6 +234,10 @@ export const masteryService = {
   },
   explain(userId: string, competencyId: string, signal?: AbortSignal) {
     return apiClient.get<Explanation>(`/api/v1/mastery/learners/${userId}/competencies/${competencyId}/explain`, { signal });
+  },
+  getEvidenceDetail(evidenceId: string, signal?: AbortSignal) {
+    const cleanId = evidenceId.replace(/^evidence_/, "");
+    return apiClient.get<DetailedEvidenceRecord>(`/api/v1/mastery/evidence/${cleanId}`, { signal });
   },
   cohortGaps(query: { team_id?: string; course_id?: string } = {}, signal?: AbortSignal) {
     return apiClient.get<CohortGaps>("/api/v1/mastery/cohort-gaps", { params: { ...query }, signal });

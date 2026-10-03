@@ -99,7 +99,7 @@ export default function LoginPage() {
       }
 
       if (!res) {
-        throw lastErr || new Error("Cannot connect to API service. Make sure the backend is running on port 8000.");
+        throw new Error("Cannot connect to backend server. Make sure the API service is running on http://localhost:8000 (cd services/api && python -m uvicorn app.main:app --reload --port 8000).");
       }
 
       if (!res.ok) {

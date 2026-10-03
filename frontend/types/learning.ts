@@ -260,17 +260,35 @@ export interface CheckpointOption {
 
 export type CheckpointStatus = "pending" | "displayed" | "answered" | "correct" | "incorrect";
 
+export interface CheckpointRemediation {
+  topic: string;
+  video_title: string;
+  content_item_id: string;
+  timestamp_start_seconds: number;
+  timestamp_end_seconds: number;
+  section_label: string;
+  explanation?: string | null;
+  action_url?: string | null;
+}
+
 export interface VideoCheckpoint {
   id: string;
   content_item_id: string;
   timestamp_seconds: number;
+  timestamp_start_seconds?: number | null;
+  timestamp_end_seconds?: number | null;
+  topic?: string | null;
   transcript_segment?: string | null;
   question: string;
   options: CheckpointOption[];
   order_index: number;
+  max_score?: number;
   status: CheckpointStatus;
   selected_option_id?: string | null;
   attempt_count: number;
+  score?: number;
+  formula_id?: string | null;
+  calculation_details?: Record<string, unknown> | null;
   correct_option_id?: string | null;
   explanation?: string | null;
 }
@@ -288,6 +306,14 @@ export interface VideoCheckpointAnswerResponse {
   status: "correct" | "incorrect";
   selected_option_id: string;
   correct_option_id: string;
+  score?: number;
+  max_score?: number;
+  attempt_number?: number;
+  formula_id?: string;
+  formula_version?: string;
+  calculation_details?: Record<string, any> | null;
+  reason?: string | null;
+  remediation?: CheckpointRemediation | null;
   explanation?: string | null;
   all_checkpoints_completed: boolean;
 }
@@ -297,5 +323,195 @@ export interface VideoSeekValidationResponse {
   reason?: string | null;
   first_missed_checkpoint?: VideoCheckpoint | null;
   missed_checkpoints: VideoCheckpoint[];
+}
+
+// --- performance reports & score transparency ---------------------------------
+
+export interface QuestionAttemptDetail {
+  id: string;
+  title: string;
+  assessment_type: "flashcard" | "quiz" | "assignment";
+  topic?: string | null;
+  attempts: number;
+  first_attempt_correct: boolean;
+  score: number;
+  max_score: number;
+  status: string;
+  answered_at?: string | null;
+  calculation_details?: Record<string, any> | null;
+  remediation?: CheckpointRemediation | null;
+}
+
+export interface TopicMasteryItem {
+  topic: string;
+  mastery_percent: number;
+  total_questions: number;
+  correct_count: number;
+  average_attempts: number;
+  status: "strong" | "developing" | "weak";
+}
+
+export interface LearningEvidenceIndexDetail {
+  lei_score: number;
+  formula_version: string;
+  weights: Record<string, number>;
+  components: Record<string, { raw_value: number; normalized_weight: number; contribution: number }>;
+}
+
+export interface LearnerPerformanceReport {
+  user_id: string;
+  user_name: string;
+  user_email?: string | null;
+  course_id?: string | null;
+  course_title?: string | null;
+  overall_score: number;
+  quiz_score?: number | null;
+  assignment_score?: number | null;
+  flashcard_score?: number | null;
+  weights_used: Record<string, number>;
+  first_attempt_accuracy: number;
+  average_attempts: number;
+  total_items_attempted: number;
+  questions_requiring_retries: number;
+  topic_mastery: TopicMasteryItem[];
+  strong_topics: string[];
+  weak_topics: string[];
+  improvement_trend: "improving" | "stable" | "declining";
+  attempt_history: QuestionAttemptDetail[];
+  lei_score?: number | null;
+  lei_detail?: LearningEvidenceIndexDetail | null;
+  confidence_score?: number | null;
+  confidence_gap?: number | null;
+  calibration_quadrant?: "calibrated_mastery" | "blind_spot" | "underestimated_competence" | "accurate_struggle" | null;
+  neutral_recommendation?: string | null;
+}
+
+export interface ManagerCohortLearnerSummary {
+  user_id: string;
+  user_name: string;
+  user_email?: string | null;
+  overall_score: number;
+  first_attempt_accuracy: number;
+  average_attempts: number;
+  items_completed: number;
+  status: "on_track" | "at_risk" | "needs_review";
+}
+
+export interface CohortWeakTopic {
+  topic: string;
+  struggling_learner_count: number;
+  avg_attempts: number;
+  avg_accuracy: number;
+}
+
+export interface ManagerCohortPerformanceReport {
+  cohort_size: number;
+  avg_overall_score: number;
+  avg_first_attempt_accuracy: number;
+  avg_attempts_per_item: number;
+  learners_requiring_attention: ManagerCohortLearnerSummary[];
+  cohort_weak_topics: CohortWeakTopic[];
+  learner_roster: ManagerCohortLearnerSummary[];
+  cohort_calibration_distribution?: Record<string, number> | null;
+  flagged_topics_count?: number;
+}
+
+// Psychometric Framework Types
+export type LearningStage =
+  | "before_course"
+  | "during_course"
+  | "after_topic"
+  | "after_video"
+  | "after_assessment"
+  | "end_of_module"
+  | "end_of_course";
+
+export type PsychometricConstruct =
+  | "confidence"
+  | "perceived_understanding"
+  | "cognitive_effort"
+  | "learning_difficulty"
+  | "application_readiness"
+  | "retention_confidence"
+  | "engagement"
+  | "self_assessed_mastery"
+  | "reflection"
+  | "motivation";
+
+export interface PsychometricQuestion {
+  id: string;
+  stage: LearningStage;
+  construct: PsychometricConstruct;
+  question_text: string;
+  scale_type: string;
+  scale_min: number;
+  scale_max: number;
+  scale_labels?: Record<string, string> | null;
+  course_id?: string | null;
+  module_id?: string | null;
+  content_item_id?: string | null;
+  topic?: string | null;
+  cooldown_seconds: number;
+}
+
+export interface PsychometricResponseSubmit {
+  question_id: string;
+  raw_response: { value: number | string | boolean };
+  course_id?: string | null;
+  module_id?: string | null;
+  content_item_id?: string | null;
+  topic?: string | null;
+}
+
+export interface PsychometricResponseReceipt {
+  response_id: string;
+  question_id: string;
+  stage: string;
+  construct: string;
+  raw_response: Record<string, any>;
+  normalized_score: number;
+  recorded_at: string;
+  acknowledgment_message: string;
+}
+
+export interface LearnerTopicProgressionItem {
+  stage: string;
+  status: string;
+  confidence_score?: number | null;
+  perceived_understanding?: number | null;
+  objective_score?: number | null;
+  updated_at: string;
+}
+
+export interface LearnerCalibrationReport {
+  user_id: string;
+  course_id?: string | null;
+  average_confidence?: number | null;
+  objective_performance?: number | null;
+  confidence_gap?: number | null;
+  calibration_quadrant?: "calibrated_mastery" | "blind_spot" | "underestimated_competence" | "accurate_struggle" | null;
+  neutral_recommendation?: string | null;
+  lei_score?: number | null;
+  lei_detail?: LearningEvidenceIndexDetail | null;
+  total_prompts_answered: number;
+  stage_progression: LearnerTopicProgressionItem[];
+}
+
+export interface ContentFrictionItem {
+  course_id?: string | null;
+  module_id?: string | null;
+  topic?: string | null;
+  content_friction_index: number;
+  is_flagged: boolean;
+  total_learner_signals: number;
+  breakdown: Record<string, number>;
+}
+
+export interface ManagerPsychometricsEffectivenessReport {
+  cohort_size: number;
+  cohort_calibration_distribution: Record<string, number>;
+  flagged_friction_topics: ContentFrictionItem[];
+  avg_cohort_lei: number;
+  avg_cohort_confidence: number;
 }
 

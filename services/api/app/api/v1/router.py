@@ -30,6 +30,8 @@ from app.api.v1.mastery import router as mastery_router
 from app.api.v1.grading import router as grading_router
 from app.api.v1.course_chat import router as course_chat_router
 from app.api.v1.video_learning import router as video_learning_router
+from app.api.v1.performance_reports import router as performance_reports_router
+from app.api.v1.psychometrics import router as psychometrics_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -44,6 +46,8 @@ api_v1_router.include_router(quizzes_router)
 api_v1_router.include_router(progress_router)
 api_v1_router.include_router(learning_router)
 api_v1_router.include_router(video_learning_router)
+api_v1_router.include_router(performance_reports_router)
+api_v1_router.include_router(psychometrics_router)
 api_v1_router.include_router(mastery_router)
 api_v1_router.include_router(grading_router)
 api_v1_router.include_router(skill_graph_router)  # before competencies: /competencies/graph vs /competencies/{id}

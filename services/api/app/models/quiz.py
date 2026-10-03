@@ -64,11 +64,16 @@ class QuizQuestion(Base):
     expected_answer = Column(Text, nullable=True)
     # [{"criterion": "...", "description": "...", "weight": 0.5}, ...] shown to learners and given to the grader
     rubric = Column(JSONB, nullable=True)
+    # Traceability to source video lesson & timestamp cue
+    source_content_item_id = Column(UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_timestamp_seconds = Column(Float, nullable=True)
+    topic = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
     quiz = relationship("Quiz", back_populates="questions")
     competency = relationship("Competency")
+    source_content_item = relationship("ContentItem")
     options = relationship("QuizOption", back_populates="question", cascade="all, delete-orphan", order_by="QuizOption.order_index")
     responses = relationship("QuestionResponse", back_populates="question", cascade="all, delete-orphan")
 

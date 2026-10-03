@@ -143,6 +143,13 @@ const LEARNER_NAV: NavSection[] = [
         description: "An AI-written quiz on your course material, and your scores",
       },
       {
+        label: "Performance & Scores",
+        href: "/learner/performance",
+        icon: TrendingUp,
+        status: "ready",
+        description: "Attempt-based scoring, transparent calculations, and remediation",
+      },
+      {
         label: "AI Insights",
         href: "/learner/insights",
         icon: Sparkles,

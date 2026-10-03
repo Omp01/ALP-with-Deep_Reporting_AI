@@ -31,7 +31,8 @@ from app.models.checkin import Checkin
 from app.models.ingestion import IngestionJob, QuestionCandidate
 from app.models.quiz import Quiz, QuizQuestion, QuizOption, QuizAttempt, QuestionResponse
 from app.models.progress import ContentProgress, ContentCompetency, AdaptiveDecision
-from app.models.video_checkpoint import VideoCheckpoint, LearnerVideoCheckpoint
+from app.models.video_checkpoint import VideoCheckpoint, LearnerVideoCheckpoint, VideoCheckpointAttempt
+from app.models.psychometrics import PsychometricQuestion, LearnerPsychometricResponse, LearnerTopicProgression
 
 __all__ = [
     "Base",
@@ -81,4 +82,9 @@ __all__ = [
     "AdaptiveDecision",
     "VideoCheckpoint",
     "LearnerVideoCheckpoint",
+    "VideoCheckpointAttempt",
+    "PsychometricQuestion",
+    "LearnerPsychometricResponse",
+    "LearnerTopicProgression",
 ]
+

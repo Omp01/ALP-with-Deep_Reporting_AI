@@ -92,3 +92,91 @@ async def event_analytics(course_id: Optional[UUID] = None, since: Optional[date
 async def competency_analytics(team_id: Optional[UUID] = None, course_id: Optional[UUID] = None, current_user: User = Depends(require_roles(["ld_admin", "org_admin", "manager"])),
                                tenant_ctx: TenantContext = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     return await mastery_api.cohort_gaps(team_id, course_id, current_user, tenant_ctx, db)
+
+
+# =============================================================================
+# Manager & Admin Reporting Intelligence Analytics Endpoints
+# =============================================================================
+
+from app.reporting import analytics_engine
+
+
+@router.get("/what-changed")
+async def what_changed_analytics(
+    days: int = Query(14, ge=1, le=365),
+    course_id: Optional[UUID] = Query(None),
+    competency_id: Optional[UUID] = Query(None),
+    team_id: Optional[UUID] = Query(None),
+    current_user: User = Depends(require_roles(["instructor", "manager", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Computes temporal delta calculations comparing current and previous periods."""
+    return await analytics_engine.compute_what_changed(
+        db=db,
+        org_id=tenant_ctx.org_id,
+        viewer=current_user,
+        days=days,
+        course_id=course_id,
+        competency_id=competency_id,
+        team_id=team_id,
+    )
+
+
+@router.get("/silent-strugglers")
+async def silent_strugglers_analytics(
+    team_id: Optional[UUID] = Query(None),
+    min_completion_pct: float = Query(0.70, ge=0.0, le=1.0),
+    max_mastery_score: float = Query(0.55, ge=0.0, le=1.0),
+    current_user: User = Depends(require_roles(["instructor", "manager", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Detects learners with high progress/completion but low demonstrated competency."""
+    return await analytics_engine.detect_silent_strugglers(
+        db=db,
+        org_id=tenant_ctx.org_id,
+        viewer=current_user,
+        team_id=team_id,
+        min_completion_pct=min_completion_pct,
+        max_mastery_score=max_mastery_score,
+    )
+
+
+@router.get("/bottlenecks")
+async def bottlenecks_analytics(
+    course_id: Optional[UUID] = Query(None),
+    team_id: Optional[UUID] = Query(None),
+    current_user: User = Depends(require_roles(["instructor", "manager", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Identifies module learning bottlenecks and path friction signals."""
+    return await analytics_engine.detect_learning_bottlenecks(
+        db=db,
+        org_id=tenant_ctx.org_id,
+        viewer=current_user,
+        course_id=course_id,
+        team_id=team_id,
+    )
+
+
+@router.get("/assessment-intelligence")
+async def assessment_intelligence_analytics(
+    quiz_id: Optional[UUID] = Query(None),
+    course_id: Optional[UUID] = Query(None),
+    team_id: Optional[UUID] = Query(None),
+    current_user: User = Depends(require_roles(["instructor", "manager", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Returns question-level factual performance and response distribution analytics."""
+    return await analytics_engine.compute_assessment_intelligence(
+        db=db,
+        org_id=tenant_ctx.org_id,
+        viewer=current_user,
+        quiz_id=quiz_id,
+        course_id=course_id,
+        team_id=team_id,
+    )
+

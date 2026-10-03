@@ -186,3 +186,128 @@ def evidence_detail(report: Report, evidence_id: str) -> Dict[str, Any]:
     links = {"evidence": f"/api/v1/mastery/evidence/{raw}"}.get(kind)
     citing = [c["claim"] for c in report.claims if evidence_id in c.get("evidence_ids", [])]
     return {**rec, "source_link": links, "cited_by": citing}
+
+
+async def investigate(
+    db: AsyncSession,
+    *,
+    org_id: UUID,
+    viewer: User,
+    question: str,
+    team_id: Optional[UUID] = None,
+    course_id: Optional[UUID] = None,
+    days: Optional[int] = 30
+) -> Dict[str, Any]:
+    """Conduct an AI investigation grounded in deterministic evidence package metrics and patterns."""
+    roles = effective_roles(viewer)
+    if not has_any_role(roles, [Role.MANAGER, Role.LD_ADMIN, Role.ORG_ADMIN]):
+        raise ReportError("AI investigation is for managers and administrators.", "forbidden", 403)
+
+    members, label = await scope_members(db, org_id, viewer, team_id)
+    pkg = await builders.build_team(db, org_id, members, team_id, label, *builders.window(days))
+
+    # Enrich package with deterministic analytics engine results
+    from app.reporting import analytics_engine
+    try:
+        bottlenecks = await analytics_engine.detect_learning_bottlenecks(db, org_id, viewer, team_id=team_id, course_id=course_id)
+        if bottlenecks.get("bottlenecks"):
+            for b in bottlenecks["bottlenecks"]:
+                pkg.pattern(
+                    kind="learning_bottleneck",
+                    statement=f"Module '{b['module_name']}' exhibits bottleneck friction: avg attempt count is {b['avg_attempts']} with drop-off rate {round(b.get('drop_off_rate', 0.0) * 100)}%.",
+                    metric_ids=[],
+                    evidence_ids=b.get("evidence_ids", []),
+                    claim_type="OBSERVATION",
+                    subject=b["module_name"],
+                    priority=2
+                )
+
+        silent = await analytics_engine.detect_silent_strugglers(db, org_id, viewer, team_id=team_id)
+        if silent.get("strugglers"):
+            for s in silent["strugglers"]:
+                pkg.pattern(
+                    kind="silent_struggler",
+                    statement=f"Learner {s['full_name']} has content completion of {round(s['completion'] * 100)}% but demonstrated mastery is only {round(s['mastery'] * 100)}%.",
+                    metric_ids=[],
+                    evidence_ids=s.get("evidence_ids", []),
+                    claim_type="OBSERVATION",
+                    subject=s["full_name"],
+                    priority=1
+                )
+
+        intel = await analytics_engine.compute_assessment_intelligence(db, org_id, viewer, team_id=team_id, course_id=course_id)
+        if intel.get("flagged_questions"):
+            for q in intel["flagged_questions"]:
+                pkg.pattern(
+                    kind="assessment_friction",
+                    statement=f"Question '{q.get('question_text', '')[:40]}' shows high retry frequency ({round(q.get('retry_rate', 0.0) * 100)}% retry rate) and low average score ({round(q.get('avg_score', 0.0) * 100)}%).",
+                    metric_ids=[],
+                    evidence_ids=q.get("evidence_ids", []),
+                    claim_type="OBSERVATION",
+                    subject=str(q.get("question_id")),
+                    priority=3
+                )
+    except Exception as e:
+        logger.warning("analytics_engine_enrichment_failed", extra={"error": str(e)})
+
+    digest = pkg.content_hash()
+    package = pkg.to_dict()
+    org = str(org_id)
+
+    # Base deterministic validation
+    base = validator.validate_all(deterministic_claims(pkg), package, org)
+    accepted, rejected = base["accepted"], base["rejected"]
+
+    result = await agent.run_investigation(pkg, question)
+    ai_status, ai_note, model = result.status, result.note, result.model
+    summary = deterministic_summary(pkg) or f"Investigation of question: {question}"
+    generated_by = "deterministic"
+    limits = []
+
+    if result.out is not None:
+        model = result.model
+        verdicts = validator.validate_all(
+            [{**c.model_dump(), "source": "ai_investigation", "scope": pkg.scope_label, "timestamp": pkg.end.isoformat()} for c in result.out.claims],
+            package, org
+        )
+        accepted += verdicts["accepted"]
+        rejected += verdicts["rejected"]
+        limits = result.out.limits
+
+        if result.out.summary and validator.validate_narrative(result.out.summary, package):
+            summary = result.out.summary
+            generated_by = "ai_investigation"
+        elif result.out.summary:
+            ai_note = "The model's summary contained unverified claims and was replaced."
+
+        if not verdicts["accepted"] and result.out.claims:
+            ai_note = (ai_note + " " if ai_note else "") + "None of the model's claims passed citation validation."
+
+    report = Report(
+        org_id=org_id,
+        audience="team",
+        scope_type="investigation",
+        scope_id=team_id,
+        period_start=pkg.start,
+        period_end=pkg.end,
+        requested_by_id=viewer.id,
+        generated_by=generated_by,
+        ai_status=ai_status,
+        ai_note=ai_note,
+        model=model,
+        prompt_version=agent.PROMPT_VERSION,
+        package_hash=digest,
+        package=package,
+        summary=summary,
+        claims=accepted,
+        rejected_claims=rejected
+    )
+    db.add(report)
+    await db.flush()
+
+    out = _out(report)
+    out["question"] = question
+    out["limits"] = limits
+    out["patterns"] = report.package["patterns"]
+    return out
+

@@ -12,3 +12,14 @@ export {
   type ModuleSummary,
   type CompetencySummary,
 } from "./content-admin";
+export { analyticsService } from "./analytics";
+export type {
+  WhatChangedResponse,
+  SilentStrugglersResponse,
+  SilentStrugglerItem,
+  BottlenecksResponse,
+  BottleneckModule,
+  AssessmentIntelligenceResponse,
+  QuestionIntelligenceItem,
+} from "./analytics";
+

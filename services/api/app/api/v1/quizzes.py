@@ -234,6 +234,9 @@ async def get_quiz_questions(
                 order_index=q.order_index,
                 explanation=None,  # Conceal until post-grading
                 rubric=[{"criterion": r.get("criterion"), "description": r.get("description")} for r in (q.rubric or [])] or None,
+                topic=q.topic,
+                source_content_item_id=q.source_content_item_id,
+                source_timestamp_seconds=q.source_timestamp_seconds,
                 options=safe_options,
             )
         )
@@ -397,6 +400,25 @@ async def _attempt_out(db: AsyncSession, quiz: Quiz, attempt: QuizAttempt, respo
         correct = next((o for o in question.options if o.is_correct), None)
         result = results.get(r.grading_result_id) if r.grading_result_id else None
         shows_answer = r.grading_status == "graded"
+
+        remediation_cue = None
+        if not r.is_correct and (question.source_content_item_id or question.topic):
+            start_sec = question.source_timestamp_seconds or 0.0
+            start_fmt = f"{int(start_sec // 60):02d}:{int(start_sec % 60):02d}"
+            end_sec = start_sec + 45.0
+            end_fmt = f"{int(end_sec // 60):02d}:{int(end_sec % 60):02d}"
+            target_cid = question.source_content_item_id or quiz.content_item_id
+            remediation_cue = CheckpointRemediation(
+                topic=question.topic or "Topic Review",
+                video_title="Recommended Video Lesson",
+                content_item_id=target_cid or quiz.id,
+                timestamp_start_seconds=start_sec,
+                timestamp_end_seconds=end_sec,
+                section_label=f"{start_fmt} - {end_fmt}",
+                explanation=question.explanation or (correct.explanation if correct else None),
+                action_url=f"/learner/learning?item_id={target_cid}&start={int(start_sec)}" if target_cid else None,
+            )
+
         graded.append(QuestionGradedResponse(
             question_id=question.id, selected_option_id=r.selected_option_id, is_correct=r.is_correct, points_awarded=r.points_awarded,
             correct_option_id=correct.id if correct and not written else None,
@@ -404,6 +426,8 @@ async def _attempt_out(db: AsyncSession, quiz: Quiz, attempt: QuizAttempt, respo
             question_type=question.question_type, grading_status=r.grading_status, score_fraction=r.score_fraction,
             graded_by=result.source if result and result.status == "accepted" else None,
             feedback=result.feedback if result and result.status == "accepted" else None,
+            topic=question.topic,
+            remediation=remediation_cue,
         ))
     return QuizAttemptResponse(
         id=attempt.id, quiz_id=attempt.quiz_id, user_id=attempt.user_id, score=attempt.score, passed=attempt.passed,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { Sidebar } from "@/components/Sidebar";
+import { FlowchartReportPanel } from "@/components/reporting/flowchart-report-panel";
 import { API_BASE_URL } from "@/lib/api-client";
 import {
   Layers,
@@ -181,6 +182,9 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Organization-Wide Flowchart BI Reports */}
+              <FlowchartReportPanel />
 
               {/* Content lives in the Content Library */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

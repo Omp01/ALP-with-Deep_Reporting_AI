@@ -124,21 +124,32 @@ docker compose up --build
 
 ## Running Manually (Without Docker)
 
-You can run the frontend and API manually on your local machine, but the system still requires **PostgreSQL** and **Redis** to be running. You can launch just the infrastructure via Docker, then run the services natively.
+You can run the frontend and API manually on your local machine. The system requires **PostgreSQL** and **Redis** to be running, which can be launched via Docker or run locally.
 
-### 1. Start Infrastructure
+Follow these steps in order to ensure login and database functions work properly:
+
+### 1. Start Infrastructure (Postgres, Redis, MinIO)
 
 ```bash
 docker compose up -d postgres redis minio
 ```
 
-### 2. Start Frontend (Next.js)
+### 2. Run Database Migrations & Seed Demo Data
+
+> **Crucial for Login:** If running manually for the first time, apply database migrations and seed the demo users (e.g. `alice.learner@acme.com` / `Password123!`).
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# Frontend is at http://localhost:3000
+# On PowerShell:
+$env:DATABASE_URL_SYNC = "postgresql://adaptive_lms:adaptive_lms_dev_password@127.0.0.1:5433/adaptive_lms"
+python -m alembic -c database/alembic.ini upgrade head
+python scripts/seed.py
+python scripts/generate_demo_data.py
+
+# On Bash/Linux/Mac:
+export DATABASE_URL_SYNC="postgresql://adaptive_lms:adaptive_lms_dev_password@127.0.0.1:5433/adaptive_lms"
+python -m alembic -c database/alembic.ini upgrade head
+python scripts/seed.py
+python scripts/generate_demo_data.py
 ```
 
 ### 3. Start API Gateway (FastAPI)
@@ -146,17 +157,43 @@ npm run dev
 ```bash
 cd services/api
 
-# Set PYTHONPATH so Python can locate both 'app' and the root 'shared' modules
+# Set PYTHONPATH so Python locates 'app' and 'shared' modules
 # On PowerShell:
 $env:PYTHONPATH=".;..\..\shared;."
+
 # On CMD:
 set PYTHONPATH=.;..\..\shared;.
+
 # On Bash/Linux/Mac:
 export PYTHONPATH=.:../../shared:.
 
 python -m uvicorn app.main:app --reload --port 8000
-# API Swagger is at http://localhost:8000/docs
+# Backend API is active at http://localhost:8000 (Swagger: http://localhost:8000/docs)
 ```
+
+### 4. Start Frontend (Next.js)
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Frontend is active at http://localhost:3000
+```
+
+---
+
+### Troubleshooting Login & Connection Errors
+
+* **"Failed to fetch" on Login:**
+  This error indicates the browser could not reach the FastAPI backend on `http://localhost:8000`.
+  1. Check the terminal where Uvicorn is running to ensure it hasn't crashed with a Python exception.
+  2. Verify that Uvicorn started cleanly (`Uvicorn running on http://127.0.0.1:8000`).
+  3. Ensure no other application is blocking port 8000.
+
+* **"Incorrect email or password" on Login:**
+  1. Ensure you have run `python scripts/seed.py` as described in Step 2.
+  2. Use password **`Password123!`** for all seeded demo users (e.g., `admin@acme.com`, `marcus.manager@acme.com`, `alice.learner@acme.com`).
+  3. Or click any persona card on the `/login` page for one-click quick login.
 
 ---
 
