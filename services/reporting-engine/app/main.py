@@ -10,7 +10,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 # Automatically locate and add project root to sys.path for 'shared' imports when running locally
-root_dir = Path(__file__).resolve().parents[3]
+_here = Path(__file__).resolve()
+root_dir = next((p for p in _here.parents if (p / "shared").is_dir()), _here.parents[1])
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 from typing import Optional, Dict, Any, List
