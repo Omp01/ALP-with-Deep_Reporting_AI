@@ -62,6 +62,93 @@ async def generate_report(payload: GenerateRequest, current_user: User = Depends
     return result
 
 
+class InvestigateRequest(BaseModel):
+    question: str = Field(..., min_length=3, max_length=500, description="Question to investigate, e.g., 'Why are learners struggling with SQL JOINs?'")
+    team_id: Optional[UUID] = Field(None, description="Optional team scope ID")
+    course_id: Optional[UUID] = Field(None, description="Optional course scope ID")
+    days: Optional[int] = Field(30, ge=1, le=365)
+
+
+@router.post("/investigate")
+async def investigate_report(
+    payload: InvestigateRequest,
+    current_user: User = Depends(require_roles(["manager", "ld_admin", "org_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    try:
+        result = await reporting.investigate(
+            db,
+            org_id=tenant_ctx.org_id,
+            viewer=current_user,
+            question=payload.question,
+            team_id=payload.team_id,
+            course_id=payload.course_id,
+            days=payload.days
+        )
+    except reporting.ReportError as exc:
+        _fail(exc)
+    await log_audit_action(db, tenant_ctx.org_id, current_user.id, "REPORT_INVESTIGATED", "REPORT", result["id"], {"question": payload.question, "ai_status": result["ai_status"]})
+    return result
+
+
+class FlowchartRequest(BaseModel):
+    flowchart_type: str = Field("competency_dependency", description="competency_dependency | module_friction | risk_cascade")
+    team_id: Optional[UUID] = Field(None, description="Optional team scope ID")
+    course_id: Optional[UUID] = Field(None, description="Optional course scope ID")
+    days: Optional[int] = Field(30, ge=1, le=365)
+
+
+@router.post("/flowchart")
+async def generate_flowchart_report(
+    payload: FlowchartRequest,
+    current_user: User = Depends(require_roles(["manager", "instructor", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    from app.reporting import flowchart
+    if payload.flowchart_type == "module_friction":
+        return await flowchart.generate_module_friction_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=payload.team_id, course_id=payload.course_id
+        )
+    elif payload.flowchart_type == "risk_cascade":
+        return await flowchart.generate_risk_cascade_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=payload.team_id
+        )
+    else:
+        return await flowchart.generate_competency_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=payload.team_id, course_id=payload.course_id
+        )
+
+
+@router.get("/flowchart")
+async def get_flowchart_report(
+    flowchart_type: str = Query("competency_dependency"),
+    team_id: Optional[UUID] = Query(None),
+    course_id: Optional[UUID] = Query(None),
+    days: Optional[int] = Query(30),
+    current_user: User = Depends(require_roles(["manager", "instructor", "ld_admin", "org_admin", "super_admin"])),
+    tenant_ctx: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    from app.reporting import flowchart
+    if flowchart_type == "module_friction":
+        return await flowchart.generate_module_friction_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=team_id, course_id=course_id
+        )
+    elif flowchart_type == "risk_cascade":
+        return await flowchart.generate_risk_cascade_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=team_id
+        )
+    else:
+        return await flowchart.generate_competency_flowchart(
+            db, tenant_ctx.org_id, current_user, team_id=team_id, course_id=course_id
+        )
+
+
+
+
+
 # ---- BI: the package as JSON, no model ---------------------------------------------------------
 async def _package_json(audience: str, scope_id: Optional[UUID], days: Optional[int], user: User, tenant_ctx: TenantContext, db: AsyncSession) -> Dict[str, Any]:
     try:
